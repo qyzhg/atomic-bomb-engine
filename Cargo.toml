@@ -13,3 +13,4 @@ indicatif = "0.17.8"
 clap = { version = "4.5.1", features = ["derive"] }
 clap_derive="4.5.0"
 anyhow = "1.0"
+prettytable = "0.10.0"
