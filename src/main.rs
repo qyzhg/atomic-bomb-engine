@@ -1,12 +1,14 @@
+use std::collections::{HashMap, HashSet};
 use reqwest;
 use tokio;
-use histogram::{Histogram, Error};
+use histogram::{Histogram};
 use std::time::{Instant, Duration};
 use std::sync::{Arc, Mutex};
 use tokio::time::interval;
 use indicatif::ProgressBar;
 use clap::Parser;
 use anyhow::{Result, Context};
+use reqwest::{Error, Response, StatusCode};
 
 
 struct TestResult {
@@ -22,7 +24,27 @@ struct TestResult {
     err_count: i32,
     total_data_kb: f64,
     throughput_per_second_kb: f64,
+    http_errors: HashMap<(u16, String), u32>
 }
+
+struct HttpErrorStats {
+    errors: Arc<Mutex<HashMap<(u16, String), u32>>>,
+}
+
+impl HttpErrorStats {
+    fn new() -> Self {
+        HttpErrorStats {
+            errors: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    // 增加一个错误和对应的出现次数
+    fn increment(&self, status_code: u16, error_message: String) {
+        let mut errors = self.errors.lock().unwrap();
+        *errors.entry((status_code, error_message)).or_insert(0) += 1;
+    }
+}
+
 
 async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, timeout_secs:u64) -> Result<TestResult> {
     let histogram = Arc::new(Mutex::new(Histogram::new(10, 16).unwrap()));
@@ -35,6 +57,8 @@ async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, timeo
     let err_count = Arc::new(Mutex::new(0));
     let mut handles = Vec::new();
     let total_response_size = Arc::new(Mutex::new(0u64));
+    let http_errors = Arc::new(Mutex::new(HttpErrorStats::new()));
+
 
     for _ in 0..concurrent_requests {
         let client_builder = reqwest::Client::builder();
@@ -52,6 +76,7 @@ async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, timeo
         let err_count_clone = err_count.clone();
         let total_response_size_clone = total_response_size.clone();
         let total_requests_clone = total_requests.clone();
+        let http_errors_clone = http_errors.clone();
 
         let handle = tokio::spawn(async move {
             while Instant::now() < test_end {
@@ -81,9 +106,22 @@ async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, timeo
                             *total_size += content_length;
                         }
                     },
-                    err => {
+                    Err(e) => {
                         *err_count_clone.lock().unwrap() += 1;
-                        println!("err:{:?}", err)
+                        let mut status_code: u16;
+                        match e.status(){
+                            None => {
+                                status_code = 0;
+                            }
+                            Some(code) => {
+                                status_code = u16::from(code);
+                            }
+                        }
+                        let err_msg = e.to_string();
+                        http_errors_clone.lock().unwrap().increment(status_code, err_msg);
+                    }
+                    unknown => {
+                        println!("未知状态：{:?}", unknown)
                     }
                 }
             }
@@ -120,6 +158,7 @@ async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, timeo
     let histogram = histogram.lock().unwrap();
     let total_response_size_kb = *total_response_size.lock().unwrap() as f64 / 1024.0;
     let throughput_kb_s = total_response_size_kb / test_duration_secs as f64;
+    let http_errors = http_errors.lock().unwrap().errors.clone();
 
 
     let test_result = TestResult {
@@ -135,6 +174,7 @@ async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, timeo
         err_count:*err_count.lock().unwrap(),
         total_data_kb:total_response_size_kb,
         throughput_per_second_kb: throughput_kb_s,
+        http_errors: http_errors.lock().unwrap().clone(),
     };
 
     Ok(test_result)
@@ -176,7 +216,10 @@ async fn main() {
             println!("95%响应时间: {} ms", result.response_time_95);
             println!("99%响应时间: {} ms", result.response_time_99);
             println!("总吞吐量:{:.2}kb", result.total_data_kb);
-            println!("每秒吞吐量:{:.2}kb", result.throughput_per_second_kb);
+            for e in result.http_errors{
+                println!("{:03} | 错误:{:?},次数:{}", e.0.0,e.0.1, e.1)
+            }
+
         },
         Err(e) => println!("Error: {}", e),
     }
