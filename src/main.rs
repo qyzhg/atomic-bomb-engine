@@ -129,9 +129,30 @@ async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, timeo
 
         handles.push(handle);
     }
-
+    // 共享任务状态
     {
-        // 打印进度条
+        let histogram_clone_for_printing = histogram.clone();
+        let successful_requests_clone_for_printing = successful_requests.clone();
+        let total_requests_clone_for_printing = total_requests.clone();
+        let max_response_time_clone_for_printing = max_response_time.clone();
+        let min_response_time_clone_for_printing = min_response_time.clone();
+        let err_count_clone_for_printing = err_count.clone();
+        let total_response_size_clone_for_printing = total_response_size.clone();
+        let http_errors_clone_for_printing = http_errors.clone();
+        tokio::spawn(share_test_results_periodically(
+            test_duration_secs,
+            histogram_clone_for_printing,
+            successful_requests_clone_for_printing,
+            total_requests_clone_for_printing,
+            max_response_time_clone_for_printing,
+            min_response_time_clone_for_printing,
+            err_count_clone_for_printing,
+            total_response_size_clone_for_printing,
+            http_errors_clone_for_printing,
+        ));
+    }
+    // 打印进度条
+    {
         let pb = ProgressBar::new(100);
         let progress_interval = Duration::from_millis(300);
         let mut interval = interval(progress_interval);
@@ -179,6 +200,28 @@ async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, timeo
     };
     Ok(test_result)
 }
+
+async fn share_test_results_periodically(
+    test_duration_secs: u64,
+    histogram: Arc<Mutex<Histogram>>,
+    successful_requests: Arc<Mutex<i32>>,
+    total_requests: Arc<Mutex<i32>>,
+    max_response_time: Arc<Mutex<u64>>,
+    min_response_time: Arc<Mutex<u64>>,
+    err_count: Arc<Mutex<i32>>,
+    total_response_size: Arc<Mutex<u64>>,
+    http_errors: Arc<Mutex<HttpErrorStats>>,
+) {
+    let mut interval = interval(Duration::from_secs(1));
+    let test_start = Instant::now();
+    let test_end = test_start + Duration::from_secs(test_duration_secs);
+
+    while Instant::now() < test_end {
+        interval.tick().await;
+        // todo: 从这里共享
+    }
+}
+
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
