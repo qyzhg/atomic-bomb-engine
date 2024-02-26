@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use tokio::time::interval;
 use indicatif::ProgressBar;
 use clap::Parser;
+use bytes;
 
 struct TestResult {
     total_duration: Duration,
@@ -17,6 +18,7 @@ struct TestResult {
     rps: f64,
     max_response_time: u64,
     min_response_time: u64,
+    err_count: i32,
 }
 
 async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32) -> Result<TestResult, Error> {
@@ -27,7 +29,7 @@ async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32) -> Re
     let test_end = test_start + Duration::from_secs(test_duration_secs);
     let max_response_time = Arc::new(Mutex::new(0u64));
     let min_response_time = Arc::new(Mutex::new(u64::MAX));
-
+    let err_count = Arc::new(Mutex::new(0));
     let mut handles = Vec::new();
 
     for _ in 0..concurrent_requests {
@@ -39,6 +41,7 @@ async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32) -> Re
         let test_end = test_end;
         let max_response_time_clone = max_response_time.clone();
         let min_response_time_clone = min_response_time.clone();
+        let err_count_clone = err_count.clone();
 
         let handle = tokio::spawn(async move {
             while Instant::now() < test_end {
@@ -57,7 +60,9 @@ async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32) -> Re
                         }
                         *successful_requests_clone.lock().unwrap() += 1;
                     },
-                    _ => {}
+                    _ => {
+                        *err_count_clone.lock().unwrap() += 1;
+                    }
                 }
             }
         });
@@ -65,17 +70,19 @@ async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32) -> Re
         handles.push(handle);
     }
     // 打印进度条
-    let pb = ProgressBar::new(test_duration_secs);
-    let progress_interval = Duration::from_secs(1); // 每1秒更新一次进度
+    let pb = ProgressBar::new(100);
+    let progress_interval = Duration::from_millis(300); // 更新间隔设置为300毫秒
     let mut interval = interval(progress_interval);
-    let _ = tokio::spawn(async move {
+
+    tokio::spawn(async move {
         while Instant::now() < test_end {
             interval.tick().await;
-            let elapsed = Instant::now().duration_since(test_start).as_secs();
-            pb.inc(1);
+            let elapsed = Instant::now().duration_since(test_start).as_secs_f64();
+            let progress = (elapsed / test_duration_secs as f64) * 100.0;
+            pb.set_position(progress as u64);
         }
         pb.finish_with_message("done");
-    });
+    }).await.unwrap();
 
     for handle in handles {
         handle.await.unwrap();
@@ -97,6 +104,7 @@ async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32) -> Re
         rps: successful_requests / test_duration_secs as f64,
         max_response_time: *max_response_time.lock().unwrap(),
         min_response_time: *min_response_time.lock().unwrap(),
+        err_count:*err_count.lock().unwrap(),
     };
 
     Ok(test_result)
@@ -124,9 +132,9 @@ async fn main() {
     match run(&args.url, args.test_duration_secs, args.concurrent_requests).await {
         Ok(result) => {
             println!("测试完成");
-            println!("持续时间: {:?}", result.total_duration);
-            println!("RPS:{:?}", result.rps);
+            println!("RPS:{:.3}", result.rps);
             println!("总请求数：{:?}", result.total_requests);
+            println!("错误数量：{:?}", result.err_count);
             println!("成功率: {:.2}%", result.success_rate);
             println!("最大响应时间:{:.2}ms", result.max_response_time);
             println!("最小响应时间:{:.2}ms", result.min_response_time);
