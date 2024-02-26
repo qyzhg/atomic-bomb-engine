@@ -9,7 +9,7 @@ use indicatif::ProgressBar;
 use clap::Parser;
 use anyhow::{Result, Context};
 use prettytable::{Table, Row, Cell, format, row};
-
+use std::io::{self, Write};
 
 struct TestResult {
     total_duration: Duration,
@@ -143,14 +143,15 @@ async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, timeo
                 let progress = (elapsed / test_duration_secs as f64) * 100.0;
                 pb.set_position(progress as u64);
             }
-            pb.finish_with_message("done");
+            pb.finish_and_clear();
         }).await.unwrap();
     }
-
+    let bar = ProgressBar::new_spinner();
+    bar.enable_steady_tick(Duration::from_millis(100));
     for handle in handles {
         handle.await.unwrap();
     }
-
+    bar.finish();
     let total_duration = Duration::from_secs(test_duration_secs);
     let total_requests = *total_requests.lock().unwrap() as f64;
     let successful_requests = *successful_requests.lock().unwrap() as f64;
@@ -176,7 +177,6 @@ async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, timeo
         throughput_per_second_kb: throughput_kb_s,
         http_errors: http_errors.lock().unwrap().clone(),
     };
-
     Ok(test_result)
 }
 
@@ -206,7 +206,6 @@ async fn main() {
 
     match run(&args.url, args.duration_secs, args.concurrent_requests, args.timeout).await {
         Ok(result) => {
-            // Create a new table for the results
             let mut table = Table::new();
             table.set_format(*format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
 
@@ -221,12 +220,10 @@ async fn main() {
             table.add_row(row!["95%响应时间", format!("{} ms", result.response_time_95)]);
             table.add_row(row!["99%响应时间", format!("{} ms", result.response_time_99)]);
             table.add_row(row!["总吞吐量", format!("{:.2}kb", result.total_data_kb)]);
-
-            // Print the results table
+            println!("压测结果:");
             table.printstd();
 
             if !result.http_errors.is_empty() {
-                // Create a new table for the errors
                 let mut errors_table = Table::new();
                 errors_table.set_format(*format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
 
@@ -238,8 +235,6 @@ async fn main() {
                         Cell::new(format!("{}", e.1).as_str()),
                     ]));
                 }
-
-                // Print the errors table
                 println!("HTTP 错误:");
                 errors_table.printstd();
             }
