@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex};
 use tokio::time::interval;
 use indicatif::ProgressBar;
 use clap::Parser;
+use anyhow::{Result, Context};
+
 
 struct TestResult {
     total_duration: Duration,
@@ -22,8 +24,8 @@ struct TestResult {
     throughput_per_second_kb: f64,
 }
 
-async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32) -> Result<TestResult, Error> {
-    let histogram = Arc::new(Mutex::new(Histogram::new(4, 14).unwrap()));
+async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, timeout_secs:u64) -> Result<TestResult> {
+    let histogram = Arc::new(Mutex::new(Histogram::new(10, 16).unwrap()));
     let successful_requests = Arc::new(Mutex::new(0));
     let total_requests = Arc::new(Mutex::new(0));
     let test_start = Instant::now();
@@ -35,7 +37,12 @@ async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32) -> Re
     let total_response_size = Arc::new(Mutex::new(0u64));
 
     for _ in 0..concurrent_requests {
-        let client = reqwest::Client::new();
+        let client_builder = reqwest::Client::builder();
+        let client = if timeout_secs > 0 {
+            client_builder.timeout(Duration::from_secs(timeout_secs)).build().context("构建带超时的http客户端失败")?
+        } else {
+            client_builder.build().context("构建http客户端失败")?
+        };
         let url = url.to_string();
         let histogram_clone = histogram.clone();
         let successful_requests_clone = successful_requests.clone();
@@ -140,19 +147,23 @@ struct Args {
     #[arg(short, long)]
     url: String,
 
-    /// 持续时间
+    /// 持续时间（秒）
     #[arg(short, long, default_value_t = 1)]
-    test_duration_secs: u64,
+    duration_secs: u64,
 
     /// 并发数
     #[arg(short, long, default_value_t = 1)]
     concurrent_requests: i32,
+
+    /// 超时时间（秒）
+    #[arg(long, default_value_t = 0)]
+    timeout: u64,
 }
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
 
-    match run(&args.url, args.test_duration_secs, args.concurrent_requests).await {
+    match run(&args.url, args.duration_secs, args.concurrent_requests, args.timeout).await {
         Ok(result) => {
             println!("测试完成");
             println!("RPS:{:.3}", result.rps);
