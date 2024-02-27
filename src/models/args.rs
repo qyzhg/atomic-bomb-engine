@@ -34,8 +34,8 @@ pub struct Args {
     pub(crate) json: Option<String>,
 
     /// form表单
-    #[arg(short, long, default_value = "")]
-    pub(crate) form: String,
+    #[arg(short, long)]
+    pub(crate) form: Option<String>,
 
     /// 设置HTTP头部
     #[clap(short = 'H', long = "header", action = ArgAction::Append)]

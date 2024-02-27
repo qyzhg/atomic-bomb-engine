@@ -24,12 +24,11 @@ pub async fn run(
     verbose: bool,
     method: &str,
     json_str: Option<String>,
-    form_data_str: &str,
+    form_data_str: Option<String>,
     headers: Vec<String>,
     cookie: Option<String>
 ) -> anyhow::Result<TestResult> {
     let method = method.to_owned();
-    let form_data_str = form_data_str.to_owned();
     let headers = headers.to_owned();
     let histogram = Arc::new(Mutex::new(Histogram::new(10, 16).unwrap()));
     let successful_requests = Arc::new(Mutex::new(0));
@@ -101,10 +100,11 @@ pub async fn run(
                     request = request.json(&json);
                 }
 
-                if !form_data_str_clone.is_empty(){
-                    let form_data = parse_form_data::parse_form_data(&form_data_str_clone);
+                if let Some(ref form_str) = form_data_str_clone{
+                    let form_data = parse_form_data::parse_form_data(&form_str);
                     request = request.form(&form_data);
                 }
+
                 match request.send().await {
                     // 请求成功
                     Ok(response) if response.status().is_success() => {

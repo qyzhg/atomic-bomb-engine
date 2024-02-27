@@ -16,7 +16,7 @@ async fn main() {
         args.verbose,
         &args.method,
         args.json,
-        &args.form,
+        args.form,
         args.headers,
         args.cookie,
     ).await {
