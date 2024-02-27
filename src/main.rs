@@ -3,7 +3,7 @@ mod core;
 
 use tokio;
 use clap::Parser;
-use models::arges::Args;
+use models::args::Args;
 
 #[tokio::main]
 async fn main() {
@@ -15,7 +15,9 @@ async fn main() {
         args.timeout,
         args.verbose,
         &args.method,
-        &args.json).await {
+        &args.json,
+        &args.form,
+    ).await {
         Ok(result) => {
             core::show_result_with_table::show_result_with_table(result)
         },

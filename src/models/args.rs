@@ -30,4 +30,8 @@ pub struct Args {
     /// json
     #[arg(short, long, default_value = "")]
     pub(crate) json: String,
+
+    /// form表单
+    #[arg(short, long, default_value = "")]
+    pub(crate) form: String,
 }

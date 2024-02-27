@@ -8,14 +8,27 @@ use anyhow::{Context};
 use reqwest::Method;
 use tokio::sync::Mutex;
 use serde_json::Value;
+use crate::core::parse_form_data;
 use crate::core::share_test_results_periodically::share_test_results_periodically;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::TestResult;
 
+// todo header支持
+// todo cookie支持
 
-pub async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, timeout_secs:u64, verbose: bool, method: &str, json_str: &str) -> anyhow::Result<TestResult> {
+pub async fn run(
+    url: &str,
+    test_duration_secs: u64,
+    concurrent_requests: i32,
+    timeout_secs:u64,
+    verbose: bool,
+    method: &str,
+    json_str: &str,
+    form_data_str: &str,
+) -> anyhow::Result<TestResult> {
     let method = method.to_owned();
     let json_str = json_str.to_owned();
+    let form_data_str = form_data_str.to_owned();
     let histogram = Arc::new(Mutex::new(Histogram::new(10, 16).unwrap()));
     let successful_requests = Arc::new(Mutex::new(0));
     let total_requests = Arc::new(Mutex::new(0));
@@ -27,6 +40,9 @@ pub async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, t
     let mut handles = Vec::new();
     let total_response_size = Arc::new(Mutex::new(0u64));
     let http_errors = Arc::new(Mutex::new(HttpErrorStats::new()));
+    if !json_str.is_empty() && !form_data_str.is_empty(){
+        return Err(anyhow::Error::msg("json和form不允许同时发送"));
+    }
     for _ in 0..concurrent_requests {
         let client_builder = reqwest::Client::builder();
         let client = if timeout_secs > 0 {
@@ -36,6 +52,7 @@ pub async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, t
         };
         let method_clone = method.clone();
         let json_str_clone = json_str.clone();
+        let form_data_str_clone = form_data_str.clone();
         let url = url.to_string();
         let histogram_clone = histogram.clone();
         let successful_requests_clone = successful_requests.clone();
@@ -57,6 +74,10 @@ pub async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, t
                 if !json_str_clone.is_empty() {
                     let json: Value = serde_json::from_str(&json_str_clone).expect("解析json失败");
                     request = request.json(&json);
+                }
+                if !form_data_str_clone.is_empty(){
+                    let form_data = parse_form_data::parse_form_data(&form_data_str_clone);
+                    request = request.form(&form_data);
                 }
                 match request.send().await {
                     // 请求成功

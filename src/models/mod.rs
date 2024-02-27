@@ -1,3 +1,3 @@
 pub(crate) mod result;
 pub(crate) mod http_error_stats;
-pub(crate) mod arges;
+pub(crate) mod args;
