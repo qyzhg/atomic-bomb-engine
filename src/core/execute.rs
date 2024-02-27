@@ -14,8 +14,6 @@ use crate::core::share_test_results_periodically::share_test_results_periodicall
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::TestResult;
 
-// todo cookie支持
-
 pub async fn run(
     url: &str,
     test_duration_secs: u64,
@@ -25,11 +23,10 @@ pub async fn run(
     method: &str,
     json_str: Option<String>,
     form_data_str: Option<String>,
-    headers: Vec<String>,
+    headers: Option<Vec<String>>,
     cookie: Option<String>
 ) -> anyhow::Result<TestResult> {
     let method = method.to_owned();
-    let headers = headers.to_owned();
     let histogram = Arc::new(Mutex::new(Histogram::new(10, 16).unwrap()));
     let successful_requests = Arc::new(Mutex::new(0));
     let total_requests = Arc::new(Mutex::new(0));
@@ -73,8 +70,9 @@ pub async fn run(
                 let start = Instant::now();
                 let method = Method::from_str(&method_clone.to_uppercase()).expect("无效的方法");
                 let mut request = client.request(method, &url);
-                if !headers_clone.is_empty(){
-                    for header in &headers_clone {
+
+                if let Some(ref headers) = headers_clone{
+                    for header in headers {
                         let parts: Vec<&str> = header.splitn(2, ':').collect();
                         if parts.len() == 2 {
                             request = request.header(parts[0].trim(), parts[1].trim());

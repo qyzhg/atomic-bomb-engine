@@ -39,7 +39,7 @@ pub struct Args {
 
     /// 设置HTTP头部
     #[clap(short = 'H', long = "header", action = ArgAction::Append)]
-    pub headers: Vec<String>,
+    pub headers: Option<Vec<String>>,
 
     /// 设置cookie
     #[clap(short = 'C', long = "cookie")]
