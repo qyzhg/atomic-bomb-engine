@@ -27,51 +27,85 @@ pub async fn run(
     cookie: Option<String>
 ) -> anyhow::Result<TestResult> {
     let method = method.to_owned();
+    // 做数据统计
     let histogram = Arc::new(Mutex::new(Histogram::new(10, 16).unwrap()));
+    // 成功数据统计
     let successful_requests = Arc::new(Mutex::new(0));
+    // 请求总数统计
     let total_requests = Arc::new(Mutex::new(0));
-    let test_start = Instant::now();
-    let test_end = test_start + Duration::from_secs(test_duration_secs);
+    // 统计最大响应时间
     let max_response_time = Arc::new(Mutex::new(0u64));
+    // 统计最小响应时间
     let min_response_time = Arc::new(Mutex::new(u64::MAX));
+    // 统计错误数量
     let err_count = Arc::new(Mutex::new(0));
+    // 线程池
     let mut handles = Vec::new();
+    // 统计响应大小
     let total_response_size = Arc::new(Mutex::new(0u64));
+    // 统计错误
     let http_errors = Arc::new(Mutex::new(HttpErrorStats::new()));
+    // 校验如果json和form同时发送，直接报错
     if json_str.is_some() && form_data_str.is_some(){
         return Err(anyhow::Error::msg("json和form不允许同时发送"));
     }
+    // 开始测试时间
+    let test_start = Instant::now();
+    // 测试结束时间
+    let test_end = test_start + Duration::from_secs(test_duration_secs);
+    // 固定并发数
     for _ in 0..concurrent_requests {
+        // 构建http客户端
         let client_builder = reqwest::Client::builder();
-        let cookie_clone = cookie.clone();
+        // 如果传入了超市时间，客户端添加超时时间
         let client = if timeout_secs > 0 {
             client_builder.timeout(Duration::from_secs(timeout_secs)).build().context("构建带超时的http客户端失败")?
         } else {
             client_builder.build().context("构建http客户端失败")?
         };
+        // cookie副本
+        let cookie_clone = cookie.clone();
+        // 请求方法副本
         let method_clone = method.clone();
+        // json副本
         let json_str_clone = json_str.clone();
+        // form副本
         let form_data_str_clone = form_data_str.clone();
+        // url转为String
         let url = url.to_string();
+        // 统计器副本
         let histogram_clone = histogram.clone();
+        // 成功数量统计副本
         let successful_requests_clone = successful_requests.clone();
-        let test_end = test_end;
+        // 最大响应时间副本
         let max_response_time_clone = max_response_time.clone();
+        // 最小响应时间副本
         let min_response_time_clone = min_response_time.clone();
+        // 错误次数副本
         let err_count_clone = err_count.clone();
+        // 响应大小副本
         let total_response_size_clone = total_response_size.clone();
+        // 请求次数副本
         let total_requests_clone = total_requests.clone();
+        // http错误副本
         let http_errors_clone = http_errors.clone();
+        // headers副本
         let headers_clone = headers.clone();
+        // 开启异步
         let handle = tokio::spawn(async move {
+            // 计时
             while Instant::now() < test_end {
                 // 总请求数+1
                 *total_requests_clone.lock().await += 1;
+                // 记录当前接口开始时间
                 let start = Instant::now();
+                // 构建请求方法
                 let method = Method::from_str(&method_clone.to_uppercase()).expect("无效的方法");
+                // 构建request
                 let mut request = client.request(method, &url);
+                // 构建请求头
                 let mut headers = HeaderMap::new();
-
+                // 判断是否传入了请求头，如果传入，就塞进去
                 if let Some(ref headers_clone) = headers_clone {
                     for header in headers_clone {
                         let parts: Vec<&str> = header.splitn(2, ':').collect();
@@ -88,7 +122,7 @@ pub async fn run(
                         }
                     }
                 }
-
+                // 判断是否传入了cookie，如果传入了，就塞进去
                 if let Some(ref cookie_clone) = cookie_clone {
                     match HeaderValue::from_str(cookie_clone) {
                         Ok(h) => {
@@ -99,20 +133,20 @@ pub async fn run(
                         }
                     }
                 }
-
+                // 塞请求头进request
                 request = request.headers(headers);
 
-
+                // 判断时候传入了json，如果传入了，就用json形式发送请求
                 if let Some(ref json_str) = json_str_clone{
                     let json: Value = serde_json::from_str(&json_str).expect("解析json失败");
                     request = request.json(&json);
                 }
-
+                // 判断是否传入了form，如果传入了，就用form形式发送请求
                 if let Some(ref form_str) = form_data_str_clone{
                     let form_data = parse_form_data::parse_form_data(&form_str);
                     request = request.form(&form_data);
                 }
-
+                // 开始发送请求
                 match request.send().await {
                     // 请求成功
                     Ok(response) if response.status().is_success() => {
@@ -135,6 +169,7 @@ pub async fn run(
                             let mut total_size = total_response_size_clone.lock().await;
                             *total_size += content_length;
                         }
+                        // 如果需要打印详细日志
                         if verbose {
                             match response.bytes().await.context("读取响应体失败"){
                                 Ok(bytes) => {
@@ -147,6 +182,7 @@ pub async fn run(
                             };
                         }
                     },
+                    // 请求失败，如果有状态码，就记录
                     Err(e) => {
                         *err_count_clone.lock().await += 1;
                         let status_code: u16;
@@ -167,10 +203,11 @@ pub async fn run(
                 }
             }
         });
-
+        // 进池子等待完成
         handles.push(handle);
     }
     // 共享任务状态
+    // todo: 做平台的话这里要加回调
     {
         let histogram_clone_for_printing = histogram.clone();
         let successful_requests_clone_for_printing = successful_requests.clone();
@@ -194,7 +231,7 @@ pub async fn run(
             ).await;
         });
     }
-    // 打印进度条
+    // 根据条件判断是否打印进度条，和等待所有任务完成
     match verbose{
         true => {
             for handle in handles {
@@ -224,7 +261,7 @@ pub async fn run(
             bar.finish();
         }
     }
-
+    // 计算返回数据
     let total_duration = Duration::from_secs(test_duration_secs);
     let total_requests = *total_requests.lock().await as f64;
     let successful_requests = *successful_requests.lock().await as f64;
@@ -233,8 +270,7 @@ pub async fn run(
     let total_response_size_kb = *total_response_size.lock().await as f64 / 1024.0;
     let throughput_kb_s = total_response_size_kb / test_duration_secs as f64;
     let http_errors = http_errors.lock().await.errors.clone();
-
-
+    // 返回值
     let test_result = TestResult {
         total_duration,
         success_rate,
