@@ -29,7 +29,7 @@ pub struct Args {
     #[arg(short, long, default_value_t = false)]
     pub(crate) verbose: bool,
 
-    /// json
+    /// json(格式:'{"key":"val"}')
     #[arg(short, long)]
     pub(crate) json: Option<String>,
 
