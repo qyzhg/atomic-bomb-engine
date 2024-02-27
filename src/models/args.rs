@@ -1,5 +1,5 @@
 use clap_derive::Parser;
-use clap::{Arg, Command, ArgAction};
+use clap::{ArgAction};
 
 
 #[derive(Parser, Debug)]
@@ -37,7 +37,11 @@ pub struct Args {
     #[arg(short, long, default_value = "")]
     pub(crate) form: String,
 
-    /// HTTP头部
+    /// 设置HTTP头部
     #[clap(short = 'H', long = "header", action = ArgAction::Append)]
     pub headers: Vec<String>,
+
+    /// 设置cookie
+    #[clap(short = 'C', long = "cookie")]
+    pub cookie: Option<String>,
 }

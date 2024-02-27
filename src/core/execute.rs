@@ -8,6 +8,7 @@ use anyhow::{Context};
 use reqwest::Method;
 use tokio::sync::Mutex;
 use serde_json::Value;
+use reqwest::header::{HeaderMap, HeaderValue, COOKIE};
 use crate::core::parse_form_data;
 use crate::core::share_test_results_periodically::share_test_results_periodically;
 use crate::models::http_error_stats::HttpErrorStats;
@@ -24,7 +25,8 @@ pub async fn run(
     method: &str,
     json_str: &str,
     form_data_str: &str,
-    headers: Vec<String>
+    headers: Vec<String>,
+    cookie: Option<String>
 ) -> anyhow::Result<TestResult> {
     let method = method.to_owned();
     let json_str = json_str.to_owned();
@@ -46,6 +48,7 @@ pub async fn run(
     }
     for _ in 0..concurrent_requests {
         let client_builder = reqwest::Client::builder();
+        let cookie_clone = cookie.clone();
         let client = if timeout_secs > 0 {
             client_builder.timeout(Duration::from_secs(timeout_secs)).build().context("构建带超时的http客户端失败")?
         } else {
@@ -80,7 +83,18 @@ pub async fn run(
                         }
                     }
                 }
-
+                if let Some(ref cookie) = cookie_clone {
+                    let mut headers = HeaderMap::new();
+                    match HeaderValue::from_str(&cookie){
+                        Ok(h) => {
+                            headers.insert(COOKIE, h);
+                            request = request.headers(headers);
+                        }
+                        Err(e) => {
+                            eprintln!("无法添加cookie:{:?}", e)
+                        }
+                    }
+                }
                 if !json_str_clone.is_empty() {
                     let json: Value = serde_json::from_str(&json_str_clone).expect("解析json失败");
                     request = request.json(&json);
@@ -121,7 +135,6 @@ pub async fn run(
                                     eprintln!("读取响应失败:{:?}", e.to_string())
                                 }
                             };
-
                         }
                     },
                     Err(e) => {
