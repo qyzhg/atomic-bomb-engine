@@ -38,9 +38,9 @@ pub async fn run(
     let mut handles = Vec::new();
     let total_response_size = Arc::new(Mutex::new(0u64));
     let http_errors = Arc::new(Mutex::new(HttpErrorStats::new()));
-    // if !json_str.is_empty() && !form_data_str.is_empty(){
-    //     return Err(anyhow::Error::msg("json和form不允许同时发送"));
-    // }
+    if json_str.is_some() && form_data_str.is_some(){
+        return Err(anyhow::Error::msg("json和form不允许同时发送"));
+    }
     for _ in 0..concurrent_requests {
         let client_builder = reqwest::Client::builder();
         let cookie_clone = cookie.clone();
