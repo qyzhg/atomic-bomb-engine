@@ -13,7 +13,6 @@ use crate::core::share_test_results_periodically::share_test_results_periodicall
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::TestResult;
 
-// todo header支持
 // todo cookie支持
 
 pub async fn run(
@@ -25,10 +24,12 @@ pub async fn run(
     method: &str,
     json_str: &str,
     form_data_str: &str,
+    headers: Vec<String>
 ) -> anyhow::Result<TestResult> {
     let method = method.to_owned();
     let json_str = json_str.to_owned();
     let form_data_str = form_data_str.to_owned();
+    let headers = headers.to_owned();
     let histogram = Arc::new(Mutex::new(Histogram::new(10, 16).unwrap()));
     let successful_requests = Arc::new(Mutex::new(0));
     let total_requests = Arc::new(Mutex::new(0));
@@ -63,7 +64,7 @@ pub async fn run(
         let total_response_size_clone = total_response_size.clone();
         let total_requests_clone = total_requests.clone();
         let http_errors_clone = http_errors.clone();
-
+        let headers_clone = headers.clone();
         let handle = tokio::spawn(async move {
             while Instant::now() < test_end {
                 // 总请求数+1
@@ -71,6 +72,15 @@ pub async fn run(
                 let start = Instant::now();
                 let method = Method::from_str(&method_clone.to_uppercase()).expect("无效的方法");
                 let mut request = client.request(method, &url);
+                if !headers_clone.is_empty(){
+                    for header in &headers_clone {
+                        let parts: Vec<&str> = header.splitn(2, ':').collect();
+                        if parts.len() == 2 {
+                            request = request.header(parts[0].trim(), parts[1].trim());
+                        }
+                    }
+                }
+
                 if !json_str_clone.is_empty() {
                     let json: Value = serde_json::from_str(&json_str_clone).expect("解析json失败");
                     request = request.json(&json);

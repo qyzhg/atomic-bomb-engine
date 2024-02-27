@@ -17,6 +17,7 @@ async fn main() {
         &args.method,
         &args.json,
         &args.form,
+        args.headers,
     ).await {
         Ok(result) => {
             core::show_result_with_table::show_result_with_table(result)

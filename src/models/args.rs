@@ -1,4 +1,6 @@
 use clap_derive::Parser;
+use clap::{Arg, Command, ArgAction};
+
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -34,4 +36,8 @@ pub struct Args {
     /// form表单
     #[arg(short, long, default_value = "")]
     pub(crate) form: String,
+
+    /// HTTP头部
+    #[clap(short = 'H', long = "header", action = ArgAction::Append)]
+    pub headers: Vec<String>,
 }
