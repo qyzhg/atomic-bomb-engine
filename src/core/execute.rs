@@ -57,7 +57,7 @@ pub async fn run(
     for _ in 0..concurrent_requests {
         // 构建http客户端
         let client_builder = reqwest::Client::builder();
-        // 如果传入了超市时间，客户端添加超时时间
+        // 如果传入了超时时间，客户端添加超时时间
         let client = if timeout_secs > 0 {
             client_builder.timeout(Duration::from_secs(timeout_secs)).build().context("构建带超时的http客户端失败")?
         } else {
