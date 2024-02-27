@@ -8,7 +8,14 @@ use models::arges::Args;
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    match core::execute::run(&args.url, args.duration_secs, args.concurrent_requests, args.timeout, args.verbose, &args.method).await {
+    match core::execute::run(
+        &args.url,
+        args.duration_secs,
+        args.concurrent_requests,
+        args.timeout,
+        args.verbose,
+        &args.method,
+        &args.json).await {
         Ok(result) => {
             core::show_result_with_table::show_result_with_table(result)
         },

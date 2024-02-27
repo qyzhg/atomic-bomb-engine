@@ -7,13 +7,15 @@ use tokio::time::interval;
 use anyhow::{Context};
 use reqwest::Method;
 use tokio::sync::Mutex;
+use serde_json::Value;
 use crate::core::share_test_results_periodically::share_test_results_periodically;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::TestResult;
 
 
-pub async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, timeout_secs:u64, verbose: bool, method: &str) -> anyhow::Result<TestResult> {
+pub async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, timeout_secs:u64, verbose: bool, method: &str, json_str: &str) -> anyhow::Result<TestResult> {
     let method = method.to_owned();
+    let json_str = json_str.to_owned();
     let histogram = Arc::new(Mutex::new(Histogram::new(10, 16).unwrap()));
     let successful_requests = Arc::new(Mutex::new(0));
     let total_requests = Arc::new(Mutex::new(0));
@@ -33,6 +35,7 @@ pub async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, t
             client_builder.build().context("构建http客户端失败")?
         };
         let method_clone = method.clone();
+        let json_str_clone = json_str.clone();
         let url = url.to_string();
         let histogram_clone = histogram.clone();
         let successful_requests_clone = successful_requests.clone();
@@ -50,7 +53,11 @@ pub async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, t
                 *total_requests_clone.lock().await += 1;
                 let start = Instant::now();
                 let method = Method::from_str(&method_clone.to_uppercase()).expect("无效的方法");
-                let request = client.request(method, &url);
+                let mut request = client.request(method, &url);
+                if !json_str_clone.is_empty() {
+                    let json: Value = serde_json::from_str(&json_str_clone).expect("解析json失败");
+                    request = request.json(&json);
+                }
                 match request.send().await {
                     // 请求成功
                     Ok(response) if response.status().is_success() => {

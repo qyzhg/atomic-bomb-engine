@@ -781,6 +781,8 @@ dependencies = [
  "indicatif",
  "prettytable",
  "reqwest",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 

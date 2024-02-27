@@ -26,4 +26,8 @@ pub struct Args {
     /// 请求方法
     #[arg(short, long, default_value = "GET")]
     pub(crate) method: String,
+
+    /// json
+    #[arg(short, long, default_value = "")]
+    pub(crate) json: String,
 }
