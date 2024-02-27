@@ -18,4 +18,8 @@ pub struct Args {
     /// 超时时间（秒）
     #[arg(long, default_value_t = 0)]
     pub(crate) timeout: u64,
+
+    /// 打印详情
+    #[arg(short, long, default_value_t = false)]
+    pub(crate) verbose: bool,
 }

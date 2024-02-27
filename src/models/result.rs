@@ -1,6 +1,6 @@
 use std::time::Duration;
 use std::collections::HashMap;
-
+#[allow(dead_code)]
 pub struct TestResult {
     pub(crate) total_duration: Duration,
     pub(crate) success_rate: f64,
