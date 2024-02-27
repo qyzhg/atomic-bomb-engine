@@ -1,16 +1,19 @@
+use std::str::FromStr;
 use std::sync::{Arc};
 use histogram::Histogram;
 use std::time::{Duration, Instant};
 use indicatif::ProgressBar;
 use tokio::time::interval;
 use anyhow::{Context};
+use reqwest::Method;
 use tokio::sync::Mutex;
 use crate::core::share_test_results_periodically::share_test_results_periodically;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::TestResult;
 
 
-pub async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, timeout_secs:u64, verbose: bool) -> anyhow::Result<TestResult> {
+pub async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, timeout_secs:u64, verbose: bool, method: &str) -> anyhow::Result<TestResult> {
+    let method = method.to_owned();
     let histogram = Arc::new(Mutex::new(Histogram::new(10, 16).unwrap()));
     let successful_requests = Arc::new(Mutex::new(0));
     let total_requests = Arc::new(Mutex::new(0));
@@ -29,6 +32,7 @@ pub async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, t
         } else {
             client_builder.build().context("构建http客户端失败")?
         };
+        let method_clone = method.clone();
         let url = url.to_string();
         let histogram_clone = histogram.clone();
         let successful_requests_clone = successful_requests.clone();
@@ -45,7 +49,9 @@ pub async fn run(url: &str, test_duration_secs: u64, concurrent_requests: i32, t
                 // 总请求数+1
                 *total_requests_clone.lock().await += 1;
                 let start = Instant::now();
-                match client.get(&url).send().await {
+                let method = Method::from_str(&method_clone.to_uppercase()).expect("无效的方法");
+                let request = client.request(method, &url);
+                match request.send().await {
                     // 请求成功
                     Ok(response) if response.status().is_success() => {
                         let duration = start.elapsed().as_millis() as u64;

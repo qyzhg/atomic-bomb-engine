@@ -22,4 +22,8 @@ pub struct Args {
     /// 打印详情
     #[arg(short, long, default_value_t = false)]
     pub(crate) verbose: bool,
+
+    /// 请求方法
+    #[arg(short, long, default_value = "GET")]
+    pub(crate) method: String,
 }
