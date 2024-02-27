@@ -15,7 +15,7 @@ async fn main() {
         args.timeout,
         args.verbose,
         &args.method,
-        &args.json,
+        args.json,
         &args.form,
         args.headers,
         args.cookie,

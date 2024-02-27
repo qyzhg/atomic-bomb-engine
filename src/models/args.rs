@@ -6,7 +6,7 @@ use clap::{ArgAction};
 #[command(version, about, long_about = None)]
 pub struct Args {
     /// 目标地址
-    #[arg(short, long)]
+    #[arg(short, long, required = true)]
     pub(crate) url: String,
 
     /// 持续时间（秒）
@@ -31,7 +31,7 @@ pub struct Args {
 
     /// json
     #[arg(short, long, default_value = "")]
-    pub(crate) json: String,
+    pub(crate) json: Option<String>,
 
     /// form表单
     #[arg(short, long, default_value = "")]
