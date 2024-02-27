@@ -8,7 +8,7 @@ use anyhow::{Context};
 use reqwest::Method;
 use tokio::sync::Mutex;
 use serde_json::Value;
-use reqwest::header::{HeaderMap, HeaderValue, COOKIE};
+use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName};
 use crate::core::parse_form_data;
 use crate::core::share_test_results_periodically::share_test_results_periodically;
 use crate::models::http_error_stats::HttpErrorStats;
@@ -70,28 +70,38 @@ pub async fn run(
                 let start = Instant::now();
                 let method = Method::from_str(&method_clone.to_uppercase()).expect("无效的方法");
                 let mut request = client.request(method, &url);
+                let mut headers = HeaderMap::new();
 
-                if let Some(ref headers) = headers_clone{
-                    for header in headers {
+                if let Some(ref headers_clone) = headers_clone {
+                    for header in headers_clone {
                         let parts: Vec<&str> = header.splitn(2, ':').collect();
                         if parts.len() == 2 {
-                            request = request.header(parts[0].trim(), parts[1].trim());
+                            if let Ok(header_name) = parts[0].trim().parse::<HeaderName>() {
+                                if let Ok(header_value) = HeaderValue::from_str(parts[1].trim()) {
+                                    headers.insert(header_name, header_value);
+                                } else {
+                                    eprintln!("无法解析头部值: '{}'", parts[1].trim());
+                                }
+                            } else {
+                                eprintln!("无法解析头部名称: '{}'", parts[0].trim());
+                            }
                         }
                     }
                 }
 
-                if let Some(ref cookie) = cookie_clone {
-                    let mut headers = HeaderMap::new();
-                    match HeaderValue::from_str(&cookie){
+                if let Some(ref cookie_clone) = cookie_clone {
+                    match HeaderValue::from_str(cookie_clone) {
                         Ok(h) => {
                             headers.insert(COOKIE, h);
-                            request = request.headers(headers);
-                        }
+                        },
                         Err(e) => {
-                            eprintln!("无法添加cookie:{:?}", e)
+                            eprintln!("无法添加cookie:{:?}", e);
                         }
                     }
                 }
+
+                request = request.headers(headers);
+
 
                 if let Some(ref json_str) = json_str_clone{
                     let json: Value = serde_json::from_str(&json_str).expect("解析json失败");
