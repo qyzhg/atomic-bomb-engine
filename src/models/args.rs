@@ -30,7 +30,7 @@ pub struct Args {
     pub(crate) method: String,
 
     /// json
-    #[arg(short, long, default_value = "")]
+    #[arg(short, long)]
     pub(crate) json: Option<String>,
 
     /// form表单
