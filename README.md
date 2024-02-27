@@ -41,7 +41,7 @@ performance-engine -u https://example.com -m POST --json '{"key":"val"}' -c 100 
 
 #### 发送POST请求，并带传入form表单,30并发，持续100秒，超时时间10秒,设置鉴权请求头
 ```bash
-performance-engine -u https://example.com -m POST --form key1=val1&key2=val2 -c 30 -d 100 --timeout 10 -H Authorization:Bearer xxxxxxx
+performance-engine -u https://example.com -m POST --form key1=val1&key2=val2 -c 30 -d 100 --timeout 10 -H 'Authorization:Bearer xxx'
 ```
 __(多个请求头可以使用多个 -H参数)__
 
