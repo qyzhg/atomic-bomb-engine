@@ -53,8 +53,39 @@ pub async fn run(
     let mut json_obj: Arc<Option<Value>> = Arc::new(None);
     if let Some(ref json_str) = json_str {
         let json: Value = serde_json::from_str(json_str).expect("解析json失败");
-        // 替换json_obj的值
         json_obj = Arc::new(Some(json));
+    }
+    // 如果传入了header，就从这里做解析
+    let mut header_map = Arc::new(None);
+    if let Some(headers) = headers{
+        let mut temp_headers_map = HeaderMap::new();
+        for header in headers {
+            let parts: Vec<&str> = header.splitn(2, ':').collect();
+            if parts.len() == 2 {
+                match parts[0].trim().parse::<HeaderName>() {
+                    Ok(header_name) =>{
+                        match HeaderValue::from_str(parts[1].trim()) {
+                            Ok(header_value)=>{
+                                temp_headers_map.insert(header_name, header_value);
+                            }
+                            Err(_) => {
+                                return Err(anyhow::Error::msg("无法解析header的值"));
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        return Err(anyhow::Error::msg("无法解析header名称"));
+                    }
+                }
+            }
+        }
+        header_map = Arc::new(Some(temp_headers_map))
+    }
+    // 如果传入了form，就从这里处理
+    let mut form_map = Arc::new(None);
+    if let Some(ref form_str) = form_data_str{
+        let form_data = parse_form_data::parse_form_data(&form_str);
+        form_map = Arc::new(Some(form_data));
     }
     // 开始测试时间
     let test_start = Instant::now();
@@ -77,7 +108,7 @@ pub async fn run(
         // json副本
         let json_obj_clone = json_obj.clone();
         // form副本
-        let form_data_str_clone = form_data_str.clone();
+        let form_map_clone = form_map.clone();
         // url转为String
         let url = url.to_string();
         // 统计器副本
@@ -97,7 +128,7 @@ pub async fn run(
         // http错误副本
         let http_errors_clone = http_errors.clone();
         // headers副本
-        let headers_clone = headers.clone();
+        let header_map_clone = header_map.clone();
         // 开启异步
         let handle = tokio::spawn(async move {
             // 计时
@@ -110,24 +141,15 @@ pub async fn run(
                 let method = Method::from_str(&method_clone.to_uppercase()).expect("无效的方法");
                 // 构建request
                 let mut request = client.request(method, &url);
+                /*
+                                构建请求头
+                    ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+                */
                 // 构建请求头
                 let mut headers = HeaderMap::new();
-                // 判断是否传入了请求头，如果传入，就塞进去
-                if let Some(ref headers_clone) = headers_clone {
-                    for header in headers_clone {
-                        let parts: Vec<&str> = header.splitn(2, ':').collect();
-                        if parts.len() == 2 {
-                            if let Ok(header_name) = parts[0].trim().parse::<HeaderName>() {
-                                if let Ok(header_value) = HeaderValue::from_str(parts[1].trim()) {
-                                    headers.insert(header_name, header_value);
-                                } else {
-                                    eprintln!("无法解析头部值: '{}'", parts[1].trim());
-                                }
-                            } else {
-                                eprintln!("无法解析头部名称: '{}'", parts[0].trim());
-                            }
-                        }
-                    }
+                // 判断是否传入了请求头，如果传入，就一次性加入
+                if let Some(header_map) = &*header_map_clone {
+                    headers.extend(header_map.iter().map(|(k, v)| (k.clone(), v.clone())));
                 }
                 // 判断是否传入了cookie，如果传入了，就塞进去
                 if let Some(ref cookie_clone) = cookie_clone {
@@ -142,15 +164,17 @@ pub async fn run(
                 }
                 // 塞请求头进request
                 request = request.headers(headers);
-
+                /*
+                                构建请求体
+                    ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+                */
+                // 如果有json，就用json的方式发送请求
                 if let Some(value) = &*json_obj_clone {
                     request = request.json(value);
                 }
-                
                 // 判断是否传入了form，如果传入了，就用form形式发送请求
-                if let Some(ref form_str) = form_data_str_clone{
-                    let form_data = parse_form_data::parse_form_data(&form_str);
-                    request = request.form(&form_data);
+                if let Some(form_map) = &*form_map_clone{
+                    request = request.form(form_map);
                 }
                 // 开始发送请求
                 match request.send().await {
