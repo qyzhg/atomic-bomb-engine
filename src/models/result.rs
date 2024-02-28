@@ -3,15 +3,15 @@ use std::collections::HashMap;
 pub struct TestResult {
     pub total_duration: f64,
     pub success_rate: f64,
-    pub(crate) median_response_time: u64,
-    pub(crate) response_time_95: u64,
-    pub(crate) response_time_99: u64,
-    pub(crate) total_requests: i32,
-    pub(crate) rps: f64,
-    pub(crate) max_response_time: u64,
-    pub(crate) min_response_time: u64,
+    pub median_response_time: u64,
+    pub response_time_95: u64,
+    pub response_time_99: u64,
+    pub total_requests: i32,
+    pub rps: f64,
+    pub max_response_time: u64,
+    pub min_response_time: u64,
     pub err_count: i32,
-    pub(crate) total_data_kb: f64,
-    pub(crate) throughput_per_second_kb: f64,
-    pub(crate) http_errors: HashMap<(u16, String), u32>
+    pub total_data_kb: f64,
+    pub throughput_per_second_kb: f64,
+    pub http_errors: HashMap<(u16, String), u32>
 }
