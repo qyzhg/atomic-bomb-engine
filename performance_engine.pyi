@@ -5,7 +5,7 @@ def run(
                 concurrent_requests: int,
                 timeout_secs: int,
                 verbose: bool = False,
-                json_obj: Dict | None = None,
+                json_str: str | None = None,
                 form_data_str: str | None = None,
                 headers: str | None = None,
                 cookie: str | None = None) -> dict:

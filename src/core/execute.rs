@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::str::FromStr;
 use std::sync::{Arc};
 use histogram::Histogram;
@@ -8,8 +7,8 @@ use tokio::time::interval;
 use anyhow::{Context};
 use reqwest::{Method};
 use tokio::sync::Mutex;
-use serde_json::Value;
 use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName};
+use serde_json::Value;
 use crate::core::parse_form_data;
 use crate::core::share_test_results_periodically::share_test_results_periodically;
 use crate::models::http_error_stats::HttpErrorStats;
@@ -22,7 +21,7 @@ pub async fn run(
     timeout_secs:u64,
     verbose: bool,
     method: &str,
-    json_obj: Option<Value>,
+    json_str: Option<String>,
     form_data_str: Option<String>,
     headers: Option<Vec<String>>,
     cookie: Option<String>
@@ -47,7 +46,7 @@ pub async fn run(
     // 统计错误
     let http_errors = Arc::new(Mutex::new(HttpErrorStats::new()));
     // 校验如果json和form同时发送，直接报错
-    if json_obj.is_some() && form_data_str.is_some(){
+    if json_str.is_some() && form_data_str.is_some(){
         return Err(anyhow::Error::msg("json和form不允许同时发送"));
     }
     // 开始测试时间
@@ -69,7 +68,7 @@ pub async fn run(
         // 请求方法副本
         let method_clone = method.clone();
         // json副本
-        let json_obj_clone = json_obj.clone();
+        let json_str_clone = json_str.clone();
         // form副本
         let form_data_str_clone = form_data_str.clone();
         // url转为String
@@ -138,9 +137,11 @@ pub async fn run(
                 request = request.headers(headers);
 
                 // 判断时候传入了json，如果传入了，就用json形式发送请求
-                if let Some(ref json_obj) = json_obj_clone {
-                    request = request.json(&json_obj);
+                if let Some(ref json_str) = json_str_clone{
+                    let json: Value = serde_json::from_str(&json_str).expect("解析json失败");
+                    request = request.json(&json);
                 }
+                
                 // 判断是否传入了form，如果传入了，就用form形式发送请求
                 if let Some(ref form_str) = form_data_str_clone{
                     let form_data = parse_form_data::parse_form_data(&form_str);

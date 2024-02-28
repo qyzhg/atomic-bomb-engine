@@ -1,6 +1,5 @@
 use clap_derive::Parser;
 use clap::{ArgAction};
-use serde_json::Value;
 
 /// 轻量级高性能压测引擎
 #[derive(Parser, Debug)]
