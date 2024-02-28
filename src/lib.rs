@@ -1,9 +1,12 @@
+use std::collections::HashMap;
+use clap::builder::Str;
 #[cfg(feature = "python-extension")]
 use pyo3::prelude::*;
 #[cfg(feature = "python-extension")]
 use tokio;
 #[cfg(feature = "python-extension")]
 use pyo3::types::PyDict;
+use serde_json::Value;
 #[cfg(feature = "python-extension")]
 use tokio::runtime::Runtime;
 
@@ -13,17 +16,17 @@ mod core;
 #[cfg(feature = "python-extension")]
 #[pyfunction]
 #[pyo3(signature = (
-                url,
-                method,
-                test_duration_secs = 1,
-                concurrent_requests = 1,
-                timeout_secs = 30,
-                verbose = false,
-                json_str=None,
-                form_data_str=None,
-                headers=None,
-                cookie=None))]
-fn run_sync(
+url,
+method,
+test_duration_secs = 1,
+concurrent_requests = 1,
+timeout_secs = 30,
+verbose = false,
+json_obj=None,
+form_data_str=None,
+headers=None,
+cookie=None))]
+fn run(
     py: Python,
     url: String,
     method: String,
@@ -31,11 +34,26 @@ fn run_sync(
     concurrent_requests: i32,
     timeout_secs: u64,
     verbose: bool,
-    json_str: Option<String>,
+    json_obj: Option<&PyAny>,
     form_data_str: Option<String>,
     headers: Option<Vec<String>>,
-    cookie: Option<String>,
-) -> PyResult<PyObject> {
+    cookie: Option<String>) -> PyResult<PyObject> {
+
+    let mut json: Option<Value> = None;
+
+    if let Some(json_dict) = json_obj{
+        let json_str = json_dict.to_object();
+        println!("{:?}", json_str);
+        match serde_json::from(&json_str){
+            Ok(j) =>{
+                json = Some(j)
+            }
+            Err(e) => {
+                return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("json解析失败: {:?}", e)));
+            }
+        }
+    }
+
     let rt = Runtime::new().unwrap();
     let result = rt.block_on(async move {
         core::execute::run(
@@ -45,7 +63,7 @@ fn run_sync(
             timeout_secs,
             verbose,
             &method,
-            json_str,
+            json,
             form_data_str,
             headers,
             cookie,
@@ -82,7 +100,7 @@ fn run_sync(
 }
 #[cfg(feature = "python-extension")]
 #[pymodule]
-fn engine(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(run_sync, m)?)?;
+fn performance_engine(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(run, m)?)?;
     Ok(())
 }

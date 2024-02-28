@@ -4,7 +4,7 @@ version = "0.2.0"
 edition = "2021"
 
 [lib]
-name = "engine"
+name = "performance_engine"
 crate-type = ["cdylib"]
 
 [features]
