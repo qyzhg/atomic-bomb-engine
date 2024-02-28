@@ -56,7 +56,14 @@ fn run_sync(
             dict.set_item("err_count", test_result.err_count)?;
             dict.set_item("total_data_kb", test_result.total_data_kb)?;
             dict.set_item("throughput_per_second_kb", test_result.throughput_per_second_kb)?;
-            dict.set_item("http_errors", test_result.http_errors)?;
+            if !test_result.http_errors.is_empty(){
+                let http_error_dict = PyDict::new(py);
+                for ((code, message), count) in test_result.http_errors.iter() {
+                    let key = format!("{}|{}", code, message);
+                    http_error_dict.set_item(key, *count).unwrap();
+                }
+                dict.set_item("http_errors", http_error_dict)?;
+            }
             Ok(dict.into())
         },
         Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Error: {:?}", e))),
