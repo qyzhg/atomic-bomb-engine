@@ -28,7 +28,7 @@ pub async fn run(
 ) -> anyhow::Result<TestResult> {
     let method = method.to_owned();
     // 做数据统计
-    let histogram = Arc::new(Mutex::new(Histogram::new(10, 16).unwrap()));
+    let histogram = Arc::new(Mutex::new(Histogram::new(10, 20).unwrap()));
     // 成功数据统计
     let successful_requests = Arc::new(Mutex::new(0));
     // 请求总数统计
@@ -49,6 +49,13 @@ pub async fn run(
     if json_str.is_some() && form_data_str.is_some(){
         return Err(anyhow::Error::msg("json和form不允许同时发送"));
     }
+    // 如果传入了json，就从这里解析
+    let mut json_obj: Arc<Option<Value>> = Arc::new(None);
+    if let Some(ref json_str) = json_str {
+        let json: Value = serde_json::from_str(json_str).expect("解析json失败");
+        // 替换json_obj的值
+        json_obj = Arc::new(Some(json));
+    }
     // 开始测试时间
     let test_start = Instant::now();
     // 测试结束时间
@@ -68,7 +75,7 @@ pub async fn run(
         // 请求方法副本
         let method_clone = method.clone();
         // json副本
-        let json_str_clone = json_str.clone();
+        let json_obj_clone = json_obj.clone();
         // form副本
         let form_data_str_clone = form_data_str.clone();
         // url转为String
@@ -136,10 +143,8 @@ pub async fn run(
                 // 塞请求头进request
                 request = request.headers(headers);
 
-                // 判断时候传入了json，如果传入了，就用json形式发送请求
-                if let Some(ref json_str) = json_str_clone{
-                    let json: Value = serde_json::from_str(&json_str).expect("解析json失败");
-                    request = request.json(&json);
+                if let Some(value) = &*json_obj_clone {
+                    request = request.json(value);
                 }
                 
                 // 判断是否传入了form，如果传入了，就用form形式发送请求
