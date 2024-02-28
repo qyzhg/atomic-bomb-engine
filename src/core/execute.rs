@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::str::FromStr;
 use std::sync::{Arc};
 use histogram::Histogram;
@@ -5,7 +6,7 @@ use std::time::{Duration, Instant};
 use indicatif::ProgressBar;
 use tokio::time::interval;
 use anyhow::{Context};
-use reqwest::Method;
+use reqwest::{Method};
 use tokio::sync::Mutex;
 use serde_json::Value;
 use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName};
@@ -197,8 +198,36 @@ pub async fn run(
                         let err_msg = e.to_string();
                         http_errors_clone.lock().await.increment(status_code, err_msg);
                     }
-                    unknown => {
-                        println!("未知状态：{:?}", unknown)
+                    res => {
+                        *err_count_clone.lock().await += 1;
+                        match res {
+                            Ok(response) => {
+                                // 先获取状态码
+                                let status_code = response.status().as_u16();
+                                // 处理await的结果
+                                match response.bytes().await {
+                                    Ok(bytes) => {
+                                        // 将Bytes转换为Vec<u8>
+                                        let bytes_vec = bytes.to_vec();
+                                        // 尝试将Vec<u8>转换为String
+                                        match String::from_utf8(bytes_vec) {
+                                            Ok(body) => {
+                                                http_errors_clone.lock().await.increment(status_code, body);
+                                            },
+                                            Err(e) => {
+                                                http_errors_clone.lock().await.increment(status_code, format!("{:?}", e));
+                                            }
+                                        }
+                                    },
+                                    Err(e) => {
+                                        eprintln!("错误信息转换失败：{:?}", e)
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("获取错误响应体失败:{:?}", e)
+                            }
+                        }
                     }
                 }
             }

@@ -12,6 +12,7 @@ mod core;
 
 #[cfg(feature = "python-extension")]
 #[pyfunction]
+#[pyo3(signature = (url, test_duration_secs, concurrent_requests, timeout_secs, verbose, method, json_str=None, form_data_str=None, headers=None, cookie=None))]
 fn run_sync(
     py: Python,
     url: String,
