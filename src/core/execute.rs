@@ -5,10 +5,10 @@ use std::time::{Duration, Instant};
 use indicatif::ProgressBar;
 use tokio::time::interval;
 use anyhow::{Context};
-use reqwest::Method;
+use reqwest::{Method};
 use tokio::sync::Mutex;
-use serde_json::Value;
 use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName};
+use serde_json::Value;
 use crate::core::parse_form_data;
 use crate::core::share_test_results_periodically::share_test_results_periodically;
 use crate::models::http_error_stats::HttpErrorStats;
@@ -28,7 +28,7 @@ pub async fn run(
 ) -> anyhow::Result<TestResult> {
     let method = method.to_owned();
     // 做数据统计
-    let histogram = Arc::new(Mutex::new(Histogram::new(10, 16).unwrap()));
+    let histogram = Arc::new(Mutex::new(Histogram::new(10, 20).unwrap()));
     // 成功数据统计
     let successful_requests = Arc::new(Mutex::new(0));
     // 请求总数统计
@@ -49,6 +49,13 @@ pub async fn run(
     if json_str.is_some() && form_data_str.is_some(){
         return Err(anyhow::Error::msg("json和form不允许同时发送"));
     }
+    // 如果传入了json，就从这里解析
+    let mut json_obj: Arc<Option<Value>> = Arc::new(None);
+    if let Some(ref json_str) = json_str {
+        let json: Value = serde_json::from_str(json_str).expect("解析json失败");
+        // 替换json_obj的值
+        json_obj = Arc::new(Some(json));
+    }
     // 开始测试时间
     let test_start = Instant::now();
     // 测试结束时间
@@ -68,7 +75,7 @@ pub async fn run(
         // 请求方法副本
         let method_clone = method.clone();
         // json副本
-        let json_str_clone = json_str.clone();
+        let json_obj_clone = json_obj.clone();
         // form副本
         let form_data_str_clone = form_data_str.clone();
         // url转为String
@@ -136,11 +143,10 @@ pub async fn run(
                 // 塞请求头进request
                 request = request.headers(headers);
 
-                // 判断时候传入了json，如果传入了，就用json形式发送请求
-                if let Some(ref json_str) = json_str_clone{
-                    let json: Value = serde_json::from_str(&json_str).expect("解析json失败");
-                    request = request.json(&json);
+                if let Some(value) = &*json_obj_clone {
+                    request = request.json(value);
                 }
+                
                 // 判断是否传入了form，如果传入了，就用form形式发送请求
                 if let Some(ref form_str) = form_data_str_clone{
                     let form_data = parse_form_data::parse_form_data(&form_str);
@@ -197,8 +203,36 @@ pub async fn run(
                         let err_msg = e.to_string();
                         http_errors_clone.lock().await.increment(status_code, err_msg);
                     }
-                    unknown => {
-                        println!("未知状态：{:?}", unknown)
+                    res => {
+                        *err_count_clone.lock().await += 1;
+                        match res {
+                            Ok(response) => {
+                                // 先获取状态码
+                                let status_code = response.status().as_u16();
+                                // 处理await的结果
+                                match response.bytes().await {
+                                    Ok(bytes) => {
+                                        // 将Bytes转换为Vec<u8>
+                                        let bytes_vec = bytes.to_vec();
+                                        // 尝试将Vec<u8>转换为String
+                                        match String::from_utf8(bytes_vec) {
+                                            Ok(body) => {
+                                                http_errors_clone.lock().await.increment(status_code, body);
+                                            },
+                                            Err(e) => {
+                                                http_errors_clone.lock().await.increment(status_code, format!("{:?}", e));
+                                            }
+                                        }
+                                    },
+                                    Err(e) => {
+                                        eprintln!("错误信息转换失败：{:?}", e)
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("获取错误响应体失败:{:?}", e)
+                            }
+                        }
                     }
                 }
             }
@@ -262,7 +296,7 @@ pub async fn run(
         }
     }
     // 计算返回数据
-    let total_duration = Duration::from_secs(test_duration_secs);
+    let total_duration = Duration::from_secs(test_duration_secs).as_secs_f64();
     let total_requests = *total_requests.lock().await as f64;
     let successful_requests = *successful_requests.lock().await as f64;
     let success_rate = successful_requests / total_requests * 100.0;
