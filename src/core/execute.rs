@@ -7,7 +7,7 @@ use tokio::time::interval;
 use anyhow::{Context};
 use reqwest::{Method};
 use tokio::sync::Mutex;
-use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName, InvalidHeaderValue, InvalidHeaderName};
+use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName};
 use serde_json::Value;
 use crate::core::parse_form_data;
 use crate::core::share_test_results_periodically::share_test_results_periodically;
