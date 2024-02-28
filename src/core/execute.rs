@@ -262,7 +262,7 @@ pub async fn run(
         }
     }
     // 计算返回数据
-    let total_duration = Duration::from_secs(test_duration_secs);
+    let total_duration = Duration::from_secs(test_duration_secs).as_secs_f64();
     let total_requests = *total_requests.lock().await as f64;
     let successful_requests = *successful_requests.lock().await as f64;
     let success_rate = successful_requests / total_requests * 100.0;
