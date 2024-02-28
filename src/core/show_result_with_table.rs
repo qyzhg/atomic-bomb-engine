@@ -2,6 +2,7 @@ use prettytable::{Cell, format, row, Row, Table};
 use crate::models::result::TestResult;
 
 // 命令行版的输出结果
+#[warn(dead_code)]
 pub(crate) fn show_result_with_table(result: TestResult){
     let mut table = Table::new();
     table.set_format(*format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);

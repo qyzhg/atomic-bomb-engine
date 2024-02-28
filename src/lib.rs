@@ -1,125 +1,70 @@
-// use pyo3::prelude::*;
-// use pyo3::wrap_pyfunction;
-// use std::collections::HashMap;
-// use pyo3::types::{PyDict};
-// mod models;
-// mod core;
-// #[pyclass]
-// pub struct PyTestResult {
-//     #[pyo3(get, set)]
-//     total_duration: u64,
-//     #[pyo3(get, set)]
-//     success_rate: f64,
-//     #[pyo3(get, set)]
-//     median_response_time: u64,
-//     #[pyo3(get, set)]
-//     response_time_95: u64,
-//     #[pyo3(get, set)]
-//     response_time_99: u64,
-//     #[pyo3(get, set)]
-//     total_requests: i32,
-//     #[pyo3(get, set)]
-//     rps: f64,
-//     #[pyo3(get, set)]
-//     max_response_time: u64,
-//     #[pyo3(get, set)]
-//     min_response_time: u64,
-//     #[pyo3(get, set)]
-//     err_count: i32,
-//     #[pyo3(get, set)]
-//     total_data_kb: f64,
-//     #[pyo3(get, set)]
-//     throughput_per_second_kb: f64,
-//     #[pyo3(get, set)]
-//     http_errors: HashMap<(u16, String), u32>,
-// }
-//
-// #[pymethods]
-// impl PyTestResult {
-//     #[new]
-//     fn new(
-//         total_duration: u64,
-//         success_rate: f64,
-//         median_response_time: u64,
-//         response_time_95: u64,
-//         response_time_99: u64,
-//         total_requests: i32,
-//         rps: f64,
-//         max_response_time: u64,
-//         min_response_time: u64,
-//         err_count: i32,
-//         total_data_kb: f64,
-//         throughput_per_second_kb: f64,
-//         http_errors: HashMap<(u16, String), u32>,
-//     ) -> Self {
-//         PyTestResult {
-//             total_duration,
-//             success_rate,
-//             median_response_time,
-//             response_time_95,
-//             response_time_99,
-//             total_requests,
-//             rps,
-//             max_response_time,
-//             min_response_time,
-//             err_count,
-//             total_data_kb,
-//             throughput_per_second_kb,
-//             http_errors,
-//         }
-//     }
-// }
-//
-// #[pyfunction]
-// fn run_wrapper(
-//     py: Python,
-//     url: &str,
-//     test_duration_secs: u64,
-//     concurrent_requests: i32,
-//     timeout_secs: u64,
-//     verbose: bool,
-//     method: &str,
-//     json_str: Option<String>,
-//     form_data_str: Option<String>,
-//     headers: Option<Vec<String>>,
-//     cookie: Option<String>,
-// ) -> PyResult<PyObject> {
-//     pyo3_asyncio::tokio::future_into_py(py, async move {
-//         let result = core::execute::run(
-//             url,
-//             test_duration_secs,
-//             concurrent_requests,
-//             timeout_secs,
-//             verbose,
-//             method,
-//             json_str,
-//             form_data_str,
-//             headers,
-//             cookie,
-//         ).await;
-//
-//         Python::with_gil(|py| {
-//             match result {
-//                 Ok(test_result) => {
-//                     let py_result = PyDict::new(py);
-//                     py_result.set_item("success_rate", test_result.success_rate)?;
-//                     py_result.set_item("error_count", test_result.err_count)?;
-//                     Ok(py_result.into())
-//                 },
-//                 Err(e) => {
-//                     // 转换错误为Python异常
-//                     Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-//                         format!("Error: {}", e)
-//                     ))
-//                 }
-//             }
-//         })
-//     })
-// }
-//
-//
-// #[pymodule]
-// fn py_core(py: Python, m: &PyModule) -> PyResult<()> {
-//     m.add_function(wrap_pyfunction!(run_wrapper, m)?)?;
-//     Ok(())
-// }
+#[cfg(feature = "python-extension")]
+use pyo3::prelude::*;
+#[cfg(feature = "python-extension")]
+use tokio;
+#[cfg(feature = "python-extension")]
+use pyo3::types::PyDict;
+#[cfg(feature = "python-extension")]
+use tokio::runtime::Runtime;
+
+mod models;
+mod core;
+
+#[cfg(feature = "python-extension")]
+#[pyfunction]
+fn run_sync(
+    py: Python,
+    url: String,
+    test_duration_secs: u64,
+    concurrent_requests: i32,
+    timeout_secs: u64,
+    verbose: bool,
+    method: String,
+    json_str: Option<String>,
+    form_data_str: Option<String>,
+    headers: Option<Vec<String>>,
+    cookie: Option<String>,
+) -> PyResult<PyObject> {
+    let rt = Runtime::new().unwrap();
+    let result = rt.block_on(async move {
+        core::execute::run(
+            &url,
+            test_duration_secs,
+            concurrent_requests,
+            timeout_secs,
+            verbose,
+            &method,
+            json_str,
+            form_data_str,
+            headers,
+            cookie,
+        ).await
+    });
+
+    match result {
+        Ok(test_result) => {
+            let dict = PyDict::new(py);
+            dict.set_item("total_duration", test_result.total_duration)?;
+            dict.set_item("success_rate", test_result.success_rate)?;
+            dict.set_item("median_response_time", test_result.median_response_time)?;
+            dict.set_item("response_time_95", test_result.response_time_95)?;
+            dict.set_item("response_time_99", test_result.response_time_99)?;
+            dict.set_item("total_requests", test_result.total_requests)?;
+            dict.set_item("rps", test_result.rps)?;
+            dict.set_item("max_response_time", test_result.max_response_time)?;
+            dict.set_item("min_response_time", test_result.min_response_time)?;
+            dict.set_item("err_count", test_result.err_count)?;
+            dict.set_item("total_data_kb", test_result.total_data_kb)?;
+            dict.set_item("throughput_per_second_kb", test_result.throughput_per_second_kb)?;
+            dict.set_item("http_errors", test_result.http_errors)?;
+            Ok(dict.into())
+        },
+        Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Error: {:?}", e))),
+    }
+}
+#[cfg(feature = "python-extension")]
+#[pymodule]
+fn engine(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(run_sync, m)?)?;
+    Ok(())
+}

@@ -3,6 +3,14 @@ name = "performance-engine"
 version = "0.2.0"
 edition = "2021"
 
+[lib]
+name = "engine"
+crate-type = ["cdylib"]
+
+[features]
+default = []
+python-extension = ["pyo3/extension-module"]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
