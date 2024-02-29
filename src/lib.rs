@@ -1,14 +1,18 @@
-#[cfg(feature = "python-extension")]
+// #[cfg(feature = "python-extension")]
 use pyo3::prelude::*;
-#[cfg(feature = "python-extension")]
+// #[cfg(feature = "python-extension")]
 use tokio;
-#[cfg(feature = "python-extension")]
+// #[cfg(feature = "python-extension")]
 use pyo3::types::PyDict;
-#[cfg(feature = "python-extension")]
+// #[cfg(feature = "python-extension")]
 use tokio::runtime::Runtime;
+use crate::core::share_channel::{MESSAGES};
+use pyo3_asyncio::tokio::future_into_py;
+use pyo3_asyncio;
 
 mod models;
 mod core;
+
 
 #[cfg(feature = "python-extension")]
 #[pyfunction]
@@ -80,9 +84,81 @@ fn run(
         Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Error: {:?}", e))),
     }
 }
+
+#[cfg(feature = "python-extension")]
+#[pyfunction]
+#[pyo3(signature = (
+url,
+method,
+test_duration_secs = 1,
+concurrent_requests = 1,
+timeout_secs = 30,
+verbose = false,
+json_str=None,
+form_data_str=None,
+headers=None,
+cookie=None))]
+fn run_async(
+    py: Python,
+    url: String,
+    method: String,
+    test_duration_secs: u64,
+    concurrent_requests: i32,
+    timeout_secs: u64,
+    verbose: bool,
+    json_str: Option<String>,
+    form_data_str: Option<String>,
+    headers: Option<Vec<String>>,
+    cookie: Option<String>
+) -> PyResult<&PyAny> {
+    future_into_py(py, async move {
+        let result = core::execute::run(
+            &url,
+            test_duration_secs,
+            concurrent_requests,
+            timeout_secs,
+            verbose,
+            &method,
+            json_str,
+            form_data_str,
+            headers,
+            cookie,
+        ).await;
+
+        Python::with_gil(|py| match result {
+            Ok(test_result) => {
+                let dict = PyDict::new(py);
+                dict.set_item("total_duration", test_result.total_duration)?;
+                // 设置其他字段...
+                Ok(dict.to_object(py))
+            },
+            Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Error: {:?}", e))),
+        })
+    })
+}
+
+#[pyclass]
+struct MessagesIterPy {}
+
+#[pymethods]
+impl MessagesIterPy {
+    #[new]
+    fn new() -> Self {
+        MessagesIterPy {}
+    }
+
+    fn next(&self) -> Option<String> {
+        // 每次调用next时锁定和解锁Mutex，尝试从队列中弹出一个消息
+        let mut messages = MESSAGES.lock().unwrap();
+        messages.pop_front()
+    }
+}
+
 #[cfg(feature = "python-extension")]
 #[pymodule]
 fn performance_engine(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run, m)?)?;
+    m.add_function(wrap_pyfunction!(run_async, m)?)?;
+    m.add_class::<MessagesIterPy>()?;
     Ok(())
 }

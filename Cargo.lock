@@ -1674,6 +1674,7 @@ dependencies = [
  "clap_derive",
  "histogram",
  "indicatif",
+ "lazy_static",
  "maturin",
  "prettytable",
  "pyo3",
