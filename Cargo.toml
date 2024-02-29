@@ -1,10 +1,10 @@
 [package]
-name = "performance-engine"
+name = "atomic-bomb-engine"
 version = "0.2.0"
 edition = "2021"
 
 [lib]
-name = "performance_engine"
+name = "atomic_bomb_engine"
 crate-type = ["cdylib"]
 
 [features]

@@ -199,7 +199,7 @@ impl StatusListenIter {
 
 #[cfg(feature = "python-extension")]
 #[pymodule]
-fn performance_engine(_py: Python, m: &PyModule) -> PyResult<()> {
+fn atomic_bomb_engine(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run, m)?)?;
     m.add_function(wrap_pyfunction!(run_async, m)?)?;
     m.add_class::<StatusListenIter>()?;
