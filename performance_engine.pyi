@@ -24,7 +24,7 @@ def run(
         :return:
         """
 
-def run_run_async(
+def run_async(
         url: str,
                 method: str,
                 test_duration_secs: int,
