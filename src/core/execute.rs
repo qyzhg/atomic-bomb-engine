@@ -9,6 +9,8 @@ use reqwest::{Method};
 use tokio::sync::Mutex;
 use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName};
 use serde_json::Value;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use crate::core::parse_form_data;
 use crate::core::status_share::{RESULT_QUEUE, SHOULD_STOP};
 use crate::models::http_error_stats::HttpErrorStats;
@@ -274,8 +276,6 @@ pub async fn run(
         let err_count_clone = Arc::clone(&err_count);
         let max_resp_time_clone = Arc::clone(&max_response_time);
         let min_resp_time_clone = Arc::clone(&min_response_time);
-        let max_response_time = *max_resp_time_clone.lock().await;
-        let min_response_time = *min_resp_time_clone.lock().await;
         let err_count = *err_count_clone.lock().await;
 
         tokio::spawn(async move {
@@ -283,13 +283,15 @@ pub async fn run(
             let should_stop = *SHOULD_STOP.lock();
             while !should_stop {
                 interval.tick().await;
+                let max_response_time_c = *max_resp_time_clone.lock().await;
+                let min_response_time_c = *min_resp_time_clone.lock().await;
                 let total_duration = (Instant::now() - test_start).as_secs_f64();
                 let total_requests = *total_requests_clone.lock().await as f64;
                 let successful_requests = *successful_requests_clone.lock().await as f64;
-                let success_rate = successful_requests / total_requests * 100.0;
+                let success_rate = (total_requests - err_count as f64) / total_requests * 100.0;
                 let histogram = histogram_clone.lock().await;
                 let total_response_size_kb = *total_response_size_clone.lock().await as f64 / 1024.0;
-                let throughput_kb_s = total_response_size_kb / total_duration as f64;
+                let throughput_kb_s = total_response_size_kb / total_duration;
                 let http_errors = http_errors_clone.lock().await.errors.clone();
                 let rps = successful_requests / total_duration;
                 let resp_median_line = match  histogram.percentile(50.0){
@@ -304,7 +306,10 @@ pub async fn run(
                     Ok(bucket) => *bucket.range().start(),
                     Err(_) =>0
                 };
-
+                let timestamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
+                    Ok(n) => n.as_millis(),
+                    Err(_) => 0,
+                };
 
                 let mut queue = RESULT_QUEUE.lock();
                 queue.push_back(TestResult{
@@ -315,12 +320,13 @@ pub async fn run(
                     response_time_99: resp_99_line,
                     total_requests: total_requests as i32,
                     rps,
-                    max_response_time,
-                    min_response_time,
+                    max_response_time: max_response_time_c,
+                    min_response_time:min_response_time_c,
                     err_count,
                     total_data_kb:total_response_size_kb,
                     throughput_per_second_kb: throughput_kb_s,
                     http_errors: http_errors.lock().unwrap().clone(),
+                    timestamp
                 });
             }
         });
@@ -358,7 +364,7 @@ pub async fn run(
         }
     }
     // 计算返回数据
-    let total_duration = Duration::from_secs(test_duration_secs).as_secs_f64();
+    let total_duration = (Instant::now() - test_start).as_secs_f64();
     let total_requests = *total_requests.lock().await as f64;
     let successful_requests = *successful_requests.lock().await as f64;
     let success_rate = successful_requests / total_requests * 100.0;
@@ -367,6 +373,10 @@ pub async fn run(
     let throughput_kb_s = total_response_size_kb / test_duration_secs as f64;
     let http_errors = http_errors.lock().await.errors.clone();
     let err_count_clone = Arc::clone(&err_count);
+    let timestamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(n) => n.as_millis(),
+        Err(_) => 0,
+    };
     // 返回值
     let test_result = TestResult {
         total_duration,
@@ -382,6 +392,7 @@ pub async fn run(
         total_data_kb:total_response_size_kb,
         throughput_per_second_kb: throughput_kb_s,
         http_errors: http_errors.lock().unwrap().clone(),
+        timestamp
     };
     let mut should_stop = SHOULD_STOP.lock();
     *should_stop = true;

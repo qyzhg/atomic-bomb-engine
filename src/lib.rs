@@ -17,6 +17,7 @@ use pyo3_asyncio;
 mod models;
 #[cfg(feature = "python-extension")]
 mod core;
+mod utils;
 
 
 #[cfg(feature = "python-extension")]
@@ -76,14 +77,9 @@ fn run(
             dict.set_item("err_count", test_result.err_count)?;
             dict.set_item("total_data_kb", test_result.total_data_kb)?;
             dict.set_item("throughput_per_second_kb", test_result.throughput_per_second_kb)?;
-            if !test_result.http_errors.is_empty(){
-                let http_error_dict = PyDict::new(py);
-                for ((code, message), count) in test_result.http_errors.iter() {
-                    let key = format!("{}|{}", code, message);
-                    http_error_dict.set_item(key, *count).unwrap();
-                }
-                dict.set_item("http_errors", http_error_dict)?;
-            }
+            let http_error_dict = utils::create_http_err_dict::create_http_error_dict(py, &test_result.http_errors)?;
+            dict.set_item("http_errors", http_error_dict)?;
+            dict.set_item("timestamp", test_result.timestamp)?;
             Ok(dict.into())
         },
         Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Error: {:?}", e))),
@@ -145,14 +141,9 @@ fn run_async(
                 dict.set_item("err_count", test_result.err_count)?;
                 dict.set_item("total_data_kb", test_result.total_data_kb)?;
                 dict.set_item("throughput_per_second_kb", test_result.throughput_per_second_kb)?;
-                if !test_result.http_errors.is_empty(){
-                    let http_error_dict = PyDict::new(py);
-                    for ((code, message), count) in test_result.http_errors.iter() {
-                        let key = format!("{}|{}", code, message);
-                        http_error_dict.set_item(key, *count).unwrap();
-                    }
-                    dict.set_item("http_errors", http_error_dict)?;
-                }
+                let http_error_dict = utils::create_http_err_dict::create_http_error_dict(py, &test_result.http_errors)?;
+                dict.set_item("http_errors", http_error_dict)?;
+                dict.set_item("timestamp", test_result.timestamp)?;
                 Ok(dict.to_object(py))
             },
             Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Error: {:?}", e))),
@@ -196,14 +187,9 @@ impl StatusListenIter {
                 dict.set_item("err_count", test_result.err_count)?;
                 dict.set_item("total_data_kb", test_result.total_data_kb)?;
                 dict.set_item("throughput_per_second_kb", test_result.throughput_per_second_kb)?;
-                if !test_result.http_errors.is_empty(){
-                    let http_error_dict = PyDict::new(py);
-                    for ((code, message), count) in test_result.http_errors.iter() {
-                        let key = format!("{}|{}", code, message);
-                        http_error_dict.set_item(key, *count).unwrap();
-                    }
-                    dict.set_item("http_errors", http_error_dict)?;
-                }
+                let http_error_dict = utils::create_http_err_dict::create_http_error_dict(py, &test_result.http_errors)?;
+                dict.set_item("http_errors", http_error_dict)?;
+                dict.set_item("timestamp", test_result.timestamp)?;
                 Ok(Some(dict.to_object(py)))
             } else {
                 Ok(Some(py.None())) // 暂时没有消息
@@ -213,7 +199,7 @@ impl StatusListenIter {
 
 #[cfg(feature = "python-extension")]
 #[pymodule]
-fn performance_engine(_py: Python, m: &PyModule) -> PyResult<()> {
+fn atomic_bomb_engine(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run, m)?)?;
     m.add_function(wrap_pyfunction!(run_async, m)?)?;
     m.add_class::<StatusListenIter>()?;
