@@ -10,6 +10,7 @@ use tokio::sync::Mutex;
 use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName};
 use serde_json::Value;
 use crate::core::parse_form_data;
+use crate::core::share_channel::{MESSAGES, SHOULD_STOP};
 use crate::core::share_test_results_periodically::share_test_results_periodically;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::TestResult;
@@ -344,5 +345,7 @@ pub async fn run(
         throughput_per_second_kb: throughput_kb_s,
         http_errors: http_errors.lock().unwrap().clone(),
     };
+    let mut should_stop = SHOULD_STOP.lock().unwrap();
+    *should_stop = true;
     Ok(test_result)
 }

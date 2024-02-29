@@ -6,9 +6,11 @@ use tokio;
 use pyo3::types::PyDict;
 // #[cfg(feature = "python-extension")]
 use tokio::runtime::Runtime;
-use crate::core::share_channel::{MESSAGES};
+use crate::core::share_channel::{MESSAGES, SHOULD_STOP};
 use pyo3_asyncio::tokio::future_into_py;
 use pyo3_asyncio;
+use pyo3::iter::IterNextOutput;
+
 
 mod models;
 mod core;
@@ -155,6 +157,7 @@ fn run_async(
     })
 }
 
+
 #[pyclass]
 struct MessagesIterPy {}
 
@@ -165,9 +168,22 @@ impl MessagesIterPy {
         MessagesIterPy {}
     }
 
-    fn next(&self) -> Option<String> {
+    fn __iter__(slf: PyRefMut<Self>) -> PyResult<PyRefMut<Self>> {
+        Ok(slf)
+    }
+
+    fn __next__(&mut self) -> Option<Option<String>> {
+        let should_stop = *SHOULD_STOP.lock().unwrap();
+        if should_stop {
+            return None; // 停止迭代
+        }
+
         let mut messages = MESSAGES.lock().unwrap();
-        messages.pop_front()
+        if let Some(message) = messages.pop_front() {
+            Some(Some(message))
+        } else {
+            Some(None) // 暂时没有消息
+        }
     }
 }
 

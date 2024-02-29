@@ -4,4 +4,5 @@ use std::sync::Mutex;
 
 lazy_static! {
     pub static ref MESSAGES: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
+    pub static ref SHOULD_STOP: Mutex<bool> = Mutex::new(false);
 }
