@@ -1676,6 +1676,7 @@ dependencies = [
  "indicatif",
  "lazy_static",
  "maturin",
+ "parking_lot",
  "prettytable",
  "pyo3",
  "pyo3-asyncio",

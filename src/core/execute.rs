@@ -10,8 +10,8 @@ use tokio::sync::Mutex;
 use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName};
 use serde_json::Value;
 use crate::core::parse_form_data;
-use crate::core::share_channel::{MESSAGES, SHOULD_STOP};
-use crate::core::share_test_results_periodically::share_test_results_periodically;
+use crate::core::share_channel::{SHOULD_STOP};
+use crate::core::statusShare::QUEUE;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::TestResult;
 
@@ -29,7 +29,7 @@ pub async fn run(
 ) -> anyhow::Result<TestResult> {
     let method = method.to_owned();
     // 做数据统计
-    let histogram = Arc::new(Mutex::new(Histogram::new(10, 20).unwrap()));
+    let histogram = Arc::new(Mutex::new(Histogram::new(8, 16).unwrap()));
     // 成功数据统计
     let successful_requests = Arc::new(Mutex::new(0));
     // 请求总数统计
@@ -266,30 +266,68 @@ pub async fn run(
         handles.push(handle);
     }
     // 共享任务状态
-    // todo: 做平台的话这里要加回调
     {
-        let histogram_clone_for_printing = histogram.clone();
-        let successful_requests_clone_for_printing = successful_requests.clone();
-        let total_requests_clone_for_printing = total_requests.clone();
-        let max_response_time_clone_for_printing = max_response_time.clone();
-        let min_response_time_clone_for_printing = min_response_time.clone();
-        let err_count_clone_for_printing = err_count.clone();
-        let total_response_size_clone_for_printing = total_response_size.clone();
-        let http_errors_clone_for_printing = http_errors.clone();
+        let total_requests_clone = Arc::clone(&total_requests);
+        let successful_requests_clone = Arc::clone(&successful_requests);
+        let histogram_clone = Arc::clone(&histogram);
+        let total_response_size_clone = Arc::clone(&total_response_size);
+        let http_errors_clone = Arc::clone(&http_errors);
+        let err_count_clone = Arc::clone(&err_count);
+        let max_resp_time_clone = Arc::clone(&max_response_time);
+        let min_resp_time_clone = Arc::clone(&min_response_time);
+        let max_response_time = *max_resp_time_clone.lock().await;
+        let min_response_time = *min_resp_time_clone.lock().await;
+        let err_count = *err_count_clone.lock().await;
+
         tokio::spawn(async move {
-            share_test_results_periodically(
-                test_duration_secs,
-                histogram_clone_for_printing,
-                successful_requests_clone_for_printing,
-                total_requests_clone_for_printing,
-                max_response_time_clone_for_printing,
-                min_response_time_clone_for_printing,
-                err_count_clone_for_printing,
-                total_response_size_clone_for_printing,
-                http_errors_clone_for_printing,
-            ).await;
+            let mut interval = interval(Duration::from_secs(1));
+            let should_stop = *SHOULD_STOP.lock().unwrap();
+            while !should_stop {
+                interval.tick().await;
+                let total_duration = (Instant::now() - test_start).as_secs_f64();
+                let total_requests = *total_requests_clone.lock().await as f64;
+                let successful_requests = *successful_requests_clone.lock().await as f64;
+                let success_rate = successful_requests / total_requests * 100.0;
+                let histogram = histogram_clone.lock().await;
+                let total_response_size_kb = *total_response_size_clone.lock().await as f64 / 1024.0;
+                let throughput_kb_s = total_response_size_kb / total_duration as f64;
+                let http_errors = http_errors_clone.lock().await.errors.clone();
+                let rps = successful_requests / total_duration;
+                let resp_median_line = match  histogram.percentile(50.0){
+                    Ok(bucket) => *bucket.range().start(),
+                    Err(_) =>0
+                };
+                let resp_95_line = match  histogram.percentile(95.0){
+                    Ok(bucket) => *bucket.range().start(),
+                    Err(_) =>0
+                };
+                let resp_99_line = match  histogram.percentile(99.0){
+                    Ok(bucket) => *bucket.range().start(),
+                    Err(_) =>0
+                };
+
+
+                let mut queue = QUEUE.lock();
+                queue.push_back(TestResult{
+                    total_duration,
+                    success_rate,
+                    median_response_time: resp_median_line,
+                    response_time_95: resp_95_line,
+                    response_time_99: resp_99_line,
+                    total_requests: total_requests as i32,
+                    rps,
+                    max_response_time,
+                    min_response_time,
+                    err_count,
+                    total_data_kb:total_response_size_kb,
+                    throughput_per_second_kb: throughput_kb_s,
+                    http_errors: http_errors.lock().unwrap().clone(),
+                });
+            }
         });
     }
+
+
     // 根据条件判断是否打印进度条，和等待所有任务完成
     match verbose{
         true => {
@@ -329,6 +367,7 @@ pub async fn run(
     let total_response_size_kb = *total_response_size.lock().await as f64 / 1024.0;
     let throughput_kb_s = total_response_size_kb / test_duration_secs as f64;
     let http_errors = http_errors.lock().await.errors.clone();
+    let err_count_clone = Arc::clone(&err_count);
     // 返回值
     let test_result = TestResult {
         total_duration,
@@ -340,12 +379,13 @@ pub async fn run(
         rps: successful_requests / test_duration_secs as f64,
         max_response_time: *max_response_time.lock().await,
         min_response_time: *min_response_time.lock().await,
-        err_count:*err_count.lock().await,
+        err_count:*err_count_clone.lock().await,
         total_data_kb:total_response_size_kb,
         throughput_per_second_kb: throughput_kb_s,
         http_errors: http_errors.lock().unwrap().clone(),
     };
     let mut should_stop = SHOULD_STOP.lock().unwrap();
     *should_stop = true;
+    eprintln!("压测结束");
     Ok(test_result)
 }

@@ -1,18 +1,21 @@
-// #[cfg(feature = "python-extension")]
+#[cfg(feature = "python-extension")]
 use pyo3::prelude::*;
-// #[cfg(feature = "python-extension")]
+#[cfg(feature = "python-extension")]
 use tokio;
-// #[cfg(feature = "python-extension")]
+#[cfg(feature = "python-extension")]
 use pyo3::types::PyDict;
-// #[cfg(feature = "python-extension")]
+#[cfg(feature = "python-extension")]
 use tokio::runtime::Runtime;
+#[cfg(feature = "python-extension")]
 use crate::core::share_channel::{MESSAGES, SHOULD_STOP};
+#[cfg(feature = "python-extension")]
 use pyo3_asyncio::tokio::future_into_py;
+#[cfg(feature = "python-extension")]
 use pyo3_asyncio;
-use pyo3::iter::IterNextOutput;
 
-
+#[cfg(feature = "python-extension")]
 mod models;
+#[cfg(feature = "python-extension")]
 mod core;
 
 
@@ -157,10 +160,11 @@ fn run_async(
     })
 }
 
-
+#[cfg(feature = "python-extension")]
 #[pyclass]
 struct MessagesIterPy {}
 
+#[cfg(feature = "python-extension")]
 #[pymethods]
 impl MessagesIterPy {
     #[new]
@@ -172,18 +176,39 @@ impl MessagesIterPy {
         Ok(slf)
     }
 
-    fn __next__(&mut self) -> Option<Option<String>> {
-        let should_stop = *SHOULD_STOP.lock().unwrap();
-        if should_stop {
-            return None; // 停止迭代
-        }
+    fn __next__(mut slf: PyRefMut<Self>, py: Python) -> PyResult<Option<PyObject>> {
+            let should_stop = *SHOULD_STOP.lock().unwrap();
+            if should_stop {
+                return Ok(None); // 停止迭代
+            }
 
-        let mut messages = MESSAGES.lock().unwrap();
-        if let Some(message) = messages.pop_front() {
-            Some(Some(message))
-        } else {
-            Some(None) // 暂时没有消息
-        }
+            let mut messages = MESSAGES.lock().unwrap();
+            if let Some(test_result) = messages.pop_front() {
+                let dict = PyDict::new(py);
+                dict.set_item("total_duration", test_result.total_duration)?;
+                dict.set_item("success_rate", test_result.success_rate)?;
+                dict.set_item("median_response_time", test_result.median_response_time)?;
+                dict.set_item("response_time_95", test_result.response_time_95)?;
+                dict.set_item("response_time_99", test_result.response_time_99)?;
+                dict.set_item("total_requests", test_result.total_requests)?;
+                dict.set_item("rps", test_result.rps)?;
+                dict.set_item("max_response_time", test_result.max_response_time)?;
+                dict.set_item("min_response_time", test_result.min_response_time)?;
+                dict.set_item("err_count", test_result.err_count)?;
+                dict.set_item("total_data_kb", test_result.total_data_kb)?;
+                dict.set_item("throughput_per_second_kb", test_result.throughput_per_second_kb)?;
+                if !test_result.http_errors.is_empty(){
+                    let http_error_dict = PyDict::new(py);
+                    for ((code, message), count) in test_result.http_errors.iter() {
+                        let key = format!("{}|{}", code, message);
+                        http_error_dict.set_item(key, *count).unwrap();
+                    }
+                    dict.set_item("http_errors", http_error_dict)?;
+                }
+                Ok(Some(dict.to_object(py)))
+            } else {
+                Ok(Some(py.None())) // 暂时没有消息
+            }
     }
 }
 
