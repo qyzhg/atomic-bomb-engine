@@ -10,8 +10,7 @@ use tokio::sync::Mutex;
 use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName};
 use serde_json::Value;
 use crate::core::parse_form_data;
-use crate::core::share_channel::{SHOULD_STOP};
-use crate::core::statusShare::QUEUE;
+use crate::core::status_share::{RESULT_QUEUE, SHOULD_STOP};
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::TestResult;
 
@@ -281,7 +280,7 @@ pub async fn run(
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(1));
-            let should_stop = *SHOULD_STOP.lock().unwrap();
+            let should_stop = *SHOULD_STOP.lock();
             while !should_stop {
                 interval.tick().await;
                 let total_duration = (Instant::now() - test_start).as_secs_f64();
@@ -307,7 +306,7 @@ pub async fn run(
                 };
 
 
-                let mut queue = QUEUE.lock();
+                let mut queue = RESULT_QUEUE.lock();
                 queue.push_back(TestResult{
                     total_duration,
                     success_rate,
@@ -384,7 +383,7 @@ pub async fn run(
         throughput_per_second_kb: throughput_kb_s,
         http_errors: http_errors.lock().unwrap().clone(),
     };
-    let mut should_stop = SHOULD_STOP.lock().unwrap();
+    let mut should_stop = SHOULD_STOP.lock();
     *should_stop = true;
     eprintln!("压测结束");
     Ok(test_result)

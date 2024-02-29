@@ -7,7 +7,7 @@ use pyo3::types::PyDict;
 #[cfg(feature = "python-extension")]
 use tokio::runtime::Runtime;
 #[cfg(feature = "python-extension")]
-use crate::core::share_channel::{MESSAGES, SHOULD_STOP};
+use crate::core::status_share::{RESULT_QUEUE, SHOULD_STOP};
 #[cfg(feature = "python-extension")]
 use pyo3_asyncio::tokio::future_into_py;
 #[cfg(feature = "python-extension")]
@@ -177,13 +177,12 @@ impl MessagesIterPy {
     }
 
     fn __next__(mut slf: PyRefMut<Self>, py: Python) -> PyResult<Option<PyObject>> {
-            let should_stop = *SHOULD_STOP.lock().unwrap();
+            let should_stop = *SHOULD_STOP.lock();
             if should_stop {
                 return Ok(None); // 停止迭代
             }
-
-            let mut messages = MESSAGES.lock().unwrap();
-            if let Some(test_result) = messages.pop_front() {
+            let mut queue = RESULT_QUEUE.lock();
+            if let Some(test_result) = queue.pop_front() {
                 let dict = PyDict::new(py);
                 dict.set_item("total_duration", test_result.total_duration)?;
                 dict.set_item("success_rate", test_result.success_rate)?;
