@@ -50,4 +50,4 @@ async def run_async(
         :return:
         """
 
-class StatusListenIter: iter
+class StatusListenIter: collections.Iterable
