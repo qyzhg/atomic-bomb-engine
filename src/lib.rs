@@ -162,14 +162,14 @@ fn run_async(
 
 #[cfg(feature = "python-extension")]
 #[pyclass]
-struct MessagesIterPy {}
+struct StatusListenIter {}
 
 #[cfg(feature = "python-extension")]
 #[pymethods]
-impl MessagesIterPy {
+impl StatusListenIter {
     #[new]
     fn new() -> Self {
-        MessagesIterPy {}
+        StatusListenIter {}
     }
 
     fn __iter__(slf: PyRefMut<Self>) -> PyResult<PyRefMut<Self>> {
@@ -216,6 +216,6 @@ impl MessagesIterPy {
 fn performance_engine(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run, m)?)?;
     m.add_function(wrap_pyfunction!(run_async, m)?)?;
-    m.add_class::<MessagesIterPy>()?;
+    m.add_class::<StatusListenIter>()?;
     Ok(())
 }

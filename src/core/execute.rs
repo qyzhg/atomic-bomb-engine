@@ -28,7 +28,7 @@ pub async fn run(
 ) -> anyhow::Result<TestResult> {
     let method = method.to_owned();
     // 做数据统计
-    let histogram = Arc::new(Mutex::new(Histogram::new(8, 16).unwrap()));
+    let histogram = Arc::new(Mutex::new(Histogram::new(14, 20).unwrap()));
     // 成功数据统计
     let successful_requests = Arc::new(Mutex::new(0));
     // 请求总数统计
