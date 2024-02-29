@@ -1,3 +1,7 @@
+from typing import Iterator, Optional
+from _pyo3_runtime import PyAny
+
+
 def run(
         url: str,
                 method: str,
@@ -50,4 +54,19 @@ async def run_async(
         :return:
         """
 
-class StatusListenIter: collections.Iterable
+
+class StatusListenIter:
+    """
+    实例化后返回一个监听器的生成器
+    必须在压测的时候进行迭代，否则无法获取到数据
+    建议如果没有获取到数据的的时候，添加一个sleep，不需要太密集的查询，引擎的生产速度是1秒一次
+    e.g.
+        async def listen():
+            for message in performance_engine.StatusListenIter():
+                if message:
+                    # 在这里处理业务逻辑，可以落库或者推送ws的操作
+                    print(message)
+            await asyncio.sleep(0.3)
+    """
+    def __iter__(self) -> "StatusListenIter": ...
+    def __next__(self) -> Optional[PyAny]: ...
