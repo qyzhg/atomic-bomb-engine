@@ -2,6 +2,8 @@
 name = "atomic-bomb-engine"
 version = "0.2.0"
 edition = "2021"
+description = "A high performance torture testing engine"
+license = "MIT"
 
 [lib]
 name = "atomic_bomb_engine"
