@@ -12,6 +12,7 @@ use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::core::parse_form_data;
+use crate::core::sleep_guard::SleepGuard;
 use crate::core::status_share::{RESULT_QUEUE, SHOULD_STOP};
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::TestResult;
@@ -26,9 +27,12 @@ pub async fn run(
     json_str: Option<String>,
     form_data_str: Option<String>,
     headers: Option<Vec<String>>,
-    cookie: Option<String>
+    cookie: Option<String>,
+    should_prevent: bool,
 ) -> anyhow::Result<TestResult> {
-    let _guard = crate::core::sleepGuard::SleepGuard::new();
+    // 阻止电脑休眠
+    let _guard = SleepGuard::new(should_prevent);
+    // 请求方法
     let method = method.to_owned();
     // 做数据统计
     let histogram = Arc::new(Mutex::new(Histogram::new(14, 20).unwrap()));
