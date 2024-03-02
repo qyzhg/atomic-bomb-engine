@@ -312,6 +312,11 @@ pub async fn run(
                 };
 
                 let mut queue = RESULT_QUEUE.lock();
+                // 如果队列中有了一个数据了，就移除旧数据
+                if queue.len() == 1 {
+                    queue.pop_front();
+                }
+                // 添加新结果
                 queue.push_back(TestResult{
                     total_duration,
                     success_rate,
