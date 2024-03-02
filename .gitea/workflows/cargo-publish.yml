@@ -1,0 +1,32 @@
+name: Publish Cargo Package
+on:
+  push:
+    branches:
+      - master
+jobs:
+  build:
+    runs-on: linux_amd64
+
+    env:
+      http_proxy: http://10.0.0.54:1080
+      https_proxy: http://10.0.0.54:1080
+      all_proxy: socks5://10.0.0.54:1080
+
+    steps:
+      - name: 签出代码
+        uses: actions/checkout@v3
+
+      - name: 安装 Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: 发布到crates.io
+        uses: actions-rs/cargo@v1
+        with:
+          command: publish
+          args: --token ${{ secrets.CARGO_TOKEN }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
