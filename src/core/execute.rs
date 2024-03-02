@@ -28,6 +28,7 @@ pub async fn run(
     headers: Option<Vec<String>>,
     cookie: Option<String>
 ) -> anyhow::Result<TestResult> {
+    let _guard = crate::core::sleepGuard::SleepGuard::new();
     let method = method.to_owned();
     // 做数据统计
     let histogram = Arc::new(Mutex::new(Histogram::new(14, 20).unwrap()));
