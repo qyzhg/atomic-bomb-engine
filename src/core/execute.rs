@@ -276,13 +276,13 @@ pub async fn run(
         let err_count_clone = Arc::clone(&err_count);
         let max_resp_time_clone = Arc::clone(&max_response_time);
         let min_resp_time_clone = Arc::clone(&min_response_time);
-        let err_count = *err_count_clone.lock().await;
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(1));
             let should_stop = *SHOULD_STOP.lock();
             while !should_stop {
                 interval.tick().await;
+                let err_count = *err_count_clone.lock().await;
                 let max_response_time_c = *max_resp_time_clone.lock().await;
                 let min_response_time_c = *min_resp_time_clone.lock().await;
                 let total_duration = (Instant::now() - test_start).as_secs_f64();
