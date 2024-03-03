@@ -239,8 +239,6 @@ pub async fn run(
 
                                 let body_bytes = match response.bytes().await {
                                         Ok(bytes) => {
-                                            let buffer = String::from_utf8(bytes.to_vec()).expect("无法转换响应体为字符串");
-                                            println!("{:+?}", buffer);
                                             Some(bytes)
                                         },
                                         Err(e) => {
