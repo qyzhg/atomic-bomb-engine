@@ -1,6 +1,7 @@
 #[cfg(target_os = "windows")]
 extern crate winapi;
 
+use std::process::{Child, Command};
 
 #[cfg(target_os = "windows")]
 use winapi::um::winbase::SetThreadExecutionState;
