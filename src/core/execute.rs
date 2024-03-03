@@ -1,4 +1,3 @@
-use std::num::NonZeroU16;
 use std::str::FromStr;
 use std::sync::{Arc};
 use histogram::Histogram;
@@ -11,6 +10,7 @@ use tokio::sync::Mutex;
 use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName};
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
+use jsonpath_lib::select;
 
 use crate::core::parse_form_data;
 use crate::core::sleep_guard::SleepGuard;
@@ -31,7 +31,6 @@ pub async fn run(
     cookie: Option<String>,
     should_prevent: bool,
     assert_json_path: Option<String>,
-    equal_int: Option<i32>,
 ) -> anyhow::Result<TestResult> {
     // 阻止电脑休眠
     let _guard = SleepGuard::new(should_prevent);
@@ -102,12 +101,12 @@ pub async fn run(
         }
     };
     // TODO： 添加校验，如果有了assert_json_path的时候，必须有断言方法
-    // let assert_json_path = match assert_json_path {
-    //     None => Arc::new(None),
-    //     Some(ajp) => {
-    //         Arc::new(Some(ajp).into())
-    //     }
-    // };
+    let assert_json_path:Arc<Option<String>> = match assert_json_path {
+        None => Arc::new(None),
+        Some(ajp) => {
+            Arc::new(Some(ajp))
+        }
+    };
     // 开始测试时间
     let test_start = Instant::now();
     // 测试结束时间
@@ -151,7 +150,7 @@ pub async fn run(
         // headers副本
         let header_map_clone = header_map.clone();
         // jsonpath的路径
-        // let assert_json_path_clone = assert_json_path.clone();
+        let assert_json_path_clone = assert_json_path.clone();
         // 开启异步
         let handle = tokio::spawn(async move {
             // 计时
@@ -229,7 +228,6 @@ pub async fn run(
                                 *max_rt = (*max_rt).max(duration);
                                 let mut min_rt = min_response_time_clone.lock().await;
                                 *min_rt = (*min_rt).min(duration);
-                                *successful_requests_clone.lock().await += 1;
                                 match histogram_clone.lock().await.increment(duration) {
                                     Ok(_) => {},
                                     Err(err) => eprintln!("错误:{}", err),
@@ -238,15 +236,57 @@ pub async fn run(
                                     let mut total_size = total_response_size_clone.lock().await;
                                     *total_size += content_length;
                                 }
-                                if verbose {
-                                    match response.bytes().await.context("读取响应体失败") {
+
+                                let body_bytes = match response.bytes().await {
                                         Ok(bytes) => {
                                             let buffer = String::from_utf8(bytes.to_vec()).expect("无法转换响应体为字符串");
                                             println!("{:+?}", buffer);
+                                            Some(bytes)
                                         },
-                                        Err(e) => eprintln!("读取响应失败:{:?}", e.to_string())
+                                        Err(e) => {
+                                            eprintln!("读取响应失败:{:?}", e.to_string());
+                                            None
+                                        }
+                                    };
+
+
+                                if verbose {
+                                    let body_bytes_clone = body_bytes.clone();
+                                    let buffer = String::from_utf8(body_bytes_clone.expect("none").to_vec()).expect("无法转换响应体为字符串");
+                                    println!("{:+?}", buffer);
+                                }
+
+                                // 如果传入了jsonpath
+                                if let Some(json_path) = &*assert_json_path_clone {
+                                    match body_bytes {
+                                        None => {
+                                            eprintln!("响应body为空，无法使用jsonpath获取到数据")
+                                        }
+                                        Some(bytes) => {
+                                            match serde_json::from_slice(&*bytes){
+                                                Ok(val) =>{
+                                                    match select(&val, json_path) {
+                                                        Ok(results) => {
+                                                            if !results.is_empty() {
+                                                                for result in results {
+                                                                    println!("匹配到的值: {:?}", result);
+                                                                }
+                                                            } else {
+                                                                println!("没有匹配到任何结果");
+                                                            }
+                                                        },
+                                                        Err(e) => eprintln!("JSONPath 查询失败: {}", e),
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("json转换提取失败:{:?}", e)
+                                                }
+                                            };
+                                        }
                                     };
                                 }
+                                // 正确统计+1
+                                *successful_requests_clone.lock().await += 1;
                             }
                             // 状态码错误
                             _ => {
