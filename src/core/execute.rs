@@ -31,6 +31,7 @@ pub async fn run(
     cookie: Option<String>,
     should_prevent: bool,
     assert_json_path: Option<String>,
+    assert_reference_object: Option<Value>
 ) -> anyhow::Result<TestResult> {
     // 阻止电脑休眠
     let _guard = SleepGuard::new(should_prevent);
@@ -107,6 +108,12 @@ pub async fn run(
             Arc::new(Some(ajp))
         }
     };
+    let assert_reference_object:Arc<Option<Value>> = match assert_reference_object {
+        None => Arc::new(None),
+        Some(v) => {
+            Arc::new(Some(v))
+        }
+    };
     // 开始测试时间
     let test_start = Instant::now();
     // 测试结束时间
@@ -151,6 +158,8 @@ pub async fn run(
         let header_map_clone = header_map.clone();
         // jsonpath的路径
         let assert_json_path_clone = assert_json_path.clone();
+        // 断言参对象
+        let assert_reference_object_clone = assert_reference_object.clone();
         // 开启异步
         let handle = tokio::spawn(async move {
             // 计时
@@ -265,12 +274,31 @@ pub async fn run(
                                                 Ok(val) =>{
                                                     match select(&val, json_path) {
                                                         Ok(results) => {
-                                                            if !results.is_empty() {
-                                                                for result in results {
-                                                                    println!("匹配到的值: {:?}", result);
-                                                                }
-                                                            } else {
-                                                                println!("没有匹配到任何结果");
+                                                            if results.is_empty(){
+                                                                eprintln!("没有匹配到任何结果");
+                                                                continue
+                                                            }
+                                                            if results.len() >1{
+                                                                eprintln!("匹配到多个值，无法进行断言");
+                                                                continue
+                                                            }
+                                                            if let Some(result) = results.get(0).map(|&v|v) {
+                                                                match Arc::as_ref(&assert_reference_object_clone) {
+                                                                    None => {
+                                                                        eprintln!("没有获取到断言参照对象");
+                                                                        continue
+                                                                    }
+                                                                    Some(reference_object) => {
+                                                                        if result != reference_object{
+                                                                            // 断言失败
+                                                                            // 失败次数+1
+                                                                            *err_count_clone.lock().await += 1;
+                                                                            // todo: 将失败情况加入到一个容器中
+                                                                            eprintln!("断言失败，预期结果：{:?}, 实际结果：{:?}", reference_object, result);
+                                                                            continue
+                                                                        }
+                                                                    }
+                                                                };
                                                             }
                                                         },
                                                         Err(e) => eprintln!("JSONPath 查询失败: {}", e),
@@ -282,6 +310,7 @@ pub async fn run(
                                             };
                                         }
                                     };
+
                                 }
                                 // 正确统计+1
                                 *successful_requests_clone.lock().await += 1;
