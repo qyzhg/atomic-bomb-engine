@@ -18,149 +18,97 @@ use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::TestResult;
 use crate::models::assert_option::AssertOption;
+use crate::models::request_option::RequestOption;
 
 pub async fn run(
-    url: &str,
+    request_options: Vec<RequestOption>,
     test_duration_secs: u64,
     concurrent_requests: i32,
-    timeout_secs:u64,
     verbose: bool,
-    method: &str,
-    json_str: Option<String>,
-    form_data_str: Option<String>,
-    headers: Option<Vec<String>>,
-    cookie: Option<String>,
     should_prevent: bool,
-    assert_options: Option<Vec<AssertOption>>
 ) -> anyhow::Result<TestResult> {
     // 阻止电脑休眠
     let _guard = SleepGuard::new(should_prevent);
-    // 请求方法
-    let method = method.to_owned();
     // 做数据统计
-    let histogram = Arc::new(Mutex::new(Histogram::new(14, 20).unwrap()));
+    let global_histogram = Arc::new(Mutex::new(Histogram::new(14, 20).unwrap()));
     // 成功数据统计
-    let successful_requests = Arc::new(Mutex::new(0));
+    let global_successful_requests = Arc::new(Mutex::new(0));
     // 请求总数统计
-    let total_requests = Arc::new(Mutex::new(0));
+    let global_total_requests = Arc::new(Mutex::new(0));
     // 统计最大响应时间
-    let max_response_time = Arc::new(Mutex::new(0u64));
+    let global_max_response_time = Arc::new(Mutex::new(0u64));
     // 统计最小响应时间
-    let min_response_time = Arc::new(Mutex::new(u64::MAX));
+    let global_min_response_time = Arc::new(Mutex::new(u64::MAX));
     // 统计错误数量
-    let err_count = Arc::new(Mutex::new(0));
+    let global_err_count = Arc::new(Mutex::new(0));
     // 线程池
     let mut handles = Vec::new();
     // 统计响应大小
-    let total_response_size = Arc::new(Mutex::new(0u64));
+    let global_total_response_size = Arc::new(Mutex::new(0u64));
     // 统计http错误
-    let http_errors = Arc::new(Mutex::new(HttpErrorStats::new()));
+    let global_http_errors = Arc::new(Mutex::new(HttpErrorStats::new()));
     // 统计断言错误
-    let assert_errors = Arc::new(Mutex::new(AssertErrorStats::new()));
-    // 校验如果json和form同时发送，直接报错
-    if json_str.is_some() && form_data_str.is_some(){
-        return Err(anyhow::Error::msg("json和form不允许同时发送"));
-    }
-    // 如果传入了json，就从这里解析
-    let mut json_obj: Arc<Option<Value>> = Arc::new(None);
-    if let Some(ref json_str) = json_str {
-        let json: Value = serde_json::from_str(json_str).expect("解析json失败");
-        json_obj = Arc::new(Some(json));
-    }
-    // 如果传入了header，就从这里做解析
-    let header_map = match headers {
-        None => Arc::new(None),
-        Some(headers) =>{
-            let mut temp_headers_map = HeaderMap::new();
-            for header in headers {
-                let parts: Vec<&str> = header.splitn(2, ':').collect();
-                if parts.len() == 2 {
-                    match parts[0].trim().parse::<HeaderName>() {
-                        Ok(header_name) =>{
-                            match HeaderValue::from_str(parts[1].trim()) {
-                                Ok(header_value)=>{
-                                    temp_headers_map.insert(header_name, header_value);
-                                }
-                                Err(err) => {
-                                    return Err(anyhow::Error::msg(format!("无法解析header的值{:?}", err)));
-                                }
-                            }
-                        }
-                        Err(err) => {
-                            return Err(anyhow::Error::msg(format!("无法解析header名称:{:?}", err)));
-                        }
-                    }
-                }
-            }
-            Arc::new(Some(temp_headers_map))
-        }
-    };
-    // 如果传入了form，就从这里处理
-    let form_map = match form_data_str {
-        None => Arc::new(None),
-        Some(form_str) => {
-            let form_data = parse_form_data::parse_form_data(&form_str);
-            Arc::new(Some(form_data))
-        }
-    };
-    let assert_options:Arc<Option<Vec<AssertOption>>> = match assert_options{
-        None => Arc::new(None),
-        Some(v) => {
-            Arc::new(Some(v))
-        }
-    };
+    let global_assert_errors = Arc::new(Mutex::new(AssertErrorStats::new()));
+    // 请求参数
+    let request_options_arc = Arc::new(Mutex::new(request_options));
     // 开始测试时间
     let test_start = Instant::now();
     // 测试结束时间
     let test_end = test_start + Duration::from_secs(test_duration_secs);
     // 固定并发数
     for _ in 0..concurrent_requests {
-        // 构建http客户端
-        let client_builder = reqwest::Client::builder();
-        // 如果传入了超时时间，客户端添加超时时间
-        let client = if timeout_secs > 0 {
-            client_builder.timeout(Duration::from_secs(timeout_secs)).build().context("构建带超时的http客户端失败")?
-        } else {
-            client_builder.build().context("构建http客户端失败")?
-        };
-        // cookie副本
-        let cookie_clone = cookie.clone();
-        // 请求方法副本
-        let method_clone = method.clone();
-        // json副本
-        let json_obj_clone = json_obj.clone();
-        // form副本
-        let form_map_clone = form_map.clone();
-        // url转为String
-        let url = url.to_string();
-        // 统计器副本
-        let histogram_clone = histogram.clone();
+        // 全局统计器副本
+        let global_histogram_clone = global_histogram.clone();
         // 成功数量统计副本
-        let successful_requests_clone = successful_requests.clone();
+        let global_successful_requests_clone = global_successful_requests.clone();
         // 最大响应时间副本
-        let max_response_time_clone = max_response_time.clone();
+        let global_max_response_time_clone = global_max_response_time.clone();
         // 最小响应时间副本
-        let min_response_time_clone = min_response_time.clone();
+        let global_min_response_time_clone = global_min_response_time.clone();
         // 错误次数副本
-        let err_count_clone = err_count.clone();
+        let global_err_count_clone = global_err_count.clone();
         // 响应大小副本
-        let total_response_size_clone = total_response_size.clone();
+        let global_total_response_size_clone = global_total_response_size.clone();
         // 请求次数副本
-        let total_requests_clone = total_requests.clone();
+        let global_total_requests_clone = global_total_requests.clone();
         // http错误副本
-        let http_errors_clone = http_errors.clone();
+        let global_http_errors_clone = global_http_errors.clone();
         // 断言错误副本
-        let assert_errors_clone = assert_errors.clone();
-        // headers副本
-        let header_map_clone = header_map.clone();
-        // 断言(支持多个)
-        let assert_options_clone = assert_options.clone();
+        let global_assert_errors_clone = global_assert_errors.clone();
+
+        for request_option in request_options {
+            // 构建http客户端
+            let client_builder = reqwest::Client::builder();
+            // 如果传入了超时时间，客户端添加超时时间
+            let client = if request_option.timeout_secs > 0 {
+                client_builder.timeout(Duration::from_secs(request_option.timeout_secs)).build().context("构建带超时的http客户端失败")?
+            } else {
+                client_builder.build().context("构建http客户端失败")?
+            };
+            // cookie副本
+            let cookie_clone = request_option.cookie.clone();
+            // 请求方法副本
+            let method_clone = request_option.method.clone();
+            // json副本
+            let json_obj_clone = request_option.json.clone();
+            // form副本
+            let form_map_clone = request_option.form_data_str.clone();
+            // headers副本
+            let header_map_clone = request_option.headers.clone();
+            // 断言(支持多个)
+            let assert_options_clone = request_option.assert_options.clone();
+
+        }
+
+
+
+
         // 开启异步
         let handle = tokio::spawn(async move {
             // 计时
             while Instant::now() < test_end {
                 // 总请求数+1
-                *total_requests_clone.lock().await += 1;
+                *global_total_requests_clone.lock().await += 1;
                 // 记录当前接口开始时间
                 let start = Instant::now();
                 // 构建请求方法
@@ -229,16 +177,16 @@ pub async fn run(
                             StatusCode::PERMANENT_REDIRECT => {
                                 // 数据统计
                                 let duration = start.elapsed().as_millis() as u64;
-                                let mut max_rt = max_response_time_clone.lock().await;
+                                let mut max_rt = global_max_response_time_clone.lock().await;
                                 *max_rt = (*max_rt).max(duration);
-                                let mut min_rt = min_response_time_clone.lock().await;
+                                let mut min_rt = global_min_response_time_clone.lock().await;
                                 *min_rt = (*min_rt).min(duration);
-                                match histogram_clone.lock().await.increment(duration) {
+                                match global_histogram_clone.lock().await.increment(duration) {
                                     Ok(_) => {},
                                     Err(err) => eprintln!("错误:{}", err),
                                 }
                                 if let Some(content_length) = response.content_length() {
-                                    let mut total_size = total_response_size_clone.lock().await;
+                                    let mut total_size = global_total_response_size_clone.lock().await;
                                     *total_size += content_length;
                                 }
                                 let url_string = response.url().to_string();
@@ -297,9 +245,9 @@ pub async fn run(
                                                 if let Some(result) = results.get(0).map(|&v|v) {
                                                     if *result != assert_option.reference_object{
                                                         // 断言失败， 失败次数+1
-                                                        *err_count_clone.lock().await += 1;
+                                                        *global_err_count_clone.lock().await += 1;
                                                         // 将失败情况加入到一个容器中
-                                                        assert_errors_clone.lock().await.increment(String::from(url_string), format!("预期结果：{:?}, 实际结果：{:?}", assert_option.reference_object, result));
+                                                        global_assert_errors_clone.lock().await.increment(String::from(url_string), format!("预期结果：{:?}, 实际结果：{:?}", assert_option.reference_object, result));
                                                         // 退出断言
                                                         break;
                                                     }
@@ -315,21 +263,21 @@ pub async fn run(
                                 }
 
                                 // 正确统计+1
-                                *successful_requests_clone.lock().await += 1;
+                                *global_successful_requests_clone.lock().await += 1;
                             }
                             // 状态码错误
                             _ => {
-                                *err_count_clone.lock().await += 1;
+                                *global_err_count_clone.lock().await += 1;
                                 let status_code = u16::from(response.status());
                                 let err_msg = format!("HTTP 错误: 状态码 {}", status_code);
                                 let url = response.url().to_string();
-                                http_errors_clone.lock().await.increment(status_code, err_msg, url);
+                                global_http_errors_clone.lock().await.increment(status_code, err_msg, url);
                             }
                         }
                     },
                     // 请求失败，如果有状态码，就记录
                     Err(e) => {
-                        *err_count_clone.lock().await += 1;
+                        *global_err_count_clone.lock().await += 1;
                         let status_code: u16;
                         match e.status(){
                             None => {
@@ -340,7 +288,7 @@ pub async fn run(
                             }
                         }
                         let err_msg = e.to_string();
-                        http_errors_clone.lock().await.increment(status_code, err_msg, url_string);
+                        global_http_errors_clone.lock().await.increment(status_code, err_msg, url_string);
                     }
                 }
             }
@@ -350,15 +298,15 @@ pub async fn run(
     }
     // 共享任务状态
     {
-        let total_requests_clone = Arc::clone(&total_requests);
-        let successful_requests_clone = Arc::clone(&successful_requests);
-        let histogram_clone = Arc::clone(&histogram);
-        let total_response_size_clone = Arc::clone(&total_response_size);
-        let http_errors_clone = Arc::clone(&http_errors);
-        let err_count_clone = Arc::clone(&err_count);
-        let max_resp_time_clone = Arc::clone(&max_response_time);
-        let min_resp_time_clone = Arc::clone(&min_response_time);
-        let assert_error_clone = Arc::clone(&assert_errors);
+        let total_requests_clone = Arc::clone(&global_total_requests);
+        let successful_requests_clone = Arc::clone(&global_successful_requests);
+        let histogram_clone = Arc::clone(&global_histogram);
+        let total_response_size_clone = Arc::clone(&global_total_response_size);
+        let http_errors_clone = Arc::clone(&global_http_errors);
+        let err_count_clone = Arc::clone(&global_err_count);
+        let max_resp_time_clone = Arc::clone(&global_max_response_time);
+        let min_resp_time_clone = Arc::clone(&global_min_response_time);
+        let assert_error_clone = Arc::clone(&global_assert_errors);
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(1));
@@ -428,15 +376,15 @@ pub async fn run(
 
     // 计算返回数据
     let total_duration = (Instant::now() - test_start).as_secs_f64();
-    let total_requests = *total_requests.lock().await as f64;
-    let successful_requests = *successful_requests.lock().await as f64;
+    let total_requests = *global_total_requests.lock().await as f64;
+    let successful_requests = *global_successful_requests.lock().await as f64;
     let success_rate = successful_requests / total_requests * 100.0;
-    let histogram = histogram.lock().await;
-    let total_response_size_kb = *total_response_size.lock().await as f64 / 1024.0;
+    let histogram = global_histogram.lock().await;
+    let total_response_size_kb = *global_total_response_size.lock().await as f64 / 1024.0;
     let throughput_kb_s = total_response_size_kb / test_duration_secs as f64;
-    let http_errors = http_errors.lock().await.errors.clone();
-    let assert_errors = assert_errors.lock().await.errors.clone();
-    let err_count_clone = Arc::clone(&err_count);
+    let http_errors = global_http_errors.lock().await.errors.clone();
+    let assert_errors = global_assert_errors.lock().await.errors.clone();
+    let err_count_clone = Arc::clone(&global_err_count);
     let timestamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(n) => n.as_millis(),
         Err(_) => 0,
@@ -450,8 +398,8 @@ pub async fn run(
         response_time_99: *histogram.percentile(99.0)?.range().start(),
         total_requests: total_requests as i32,
         rps: successful_requests / test_duration_secs as f64,
-        max_response_time: *max_response_time.lock().await,
-        min_response_time: *min_response_time.lock().await,
+        max_response_time: *global_max_response_time.lock().await,
+        min_response_time: *global_min_response_time.lock().await,
         err_count:*err_count_clone.lock().await,
         total_data_kb:total_response_size_kb,
         throughput_per_second_kb: throughput_kb_s,
