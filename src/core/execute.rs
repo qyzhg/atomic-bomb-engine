@@ -300,7 +300,6 @@ pub async fn run(
                                                         *err_count_clone.lock().await += 1;
                                                         // 将失败情况加入到一个容器中
                                                         assert_errors_clone.lock().await.increment(String::from(url_string), format!("预期结果：{:?}, 实际结果：{:?}", assert_option.reference_object, result));
-                                                        eprintln!("断言失败，预期结果：{:?}, 实际结果：{:?}", assert_option.reference_object, result);
                                                         // 退出断言
                                                         break;
                                                     }
