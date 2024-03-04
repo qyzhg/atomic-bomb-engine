@@ -15,4 +15,5 @@ pub struct TestResult {
     pub throughput_per_second_kb: f64,
     pub http_errors: HashMap<(u16, String), u32>,
     pub timestamp: u128,
+    pub assert_errors: HashMap<(String, String), u32>
 }

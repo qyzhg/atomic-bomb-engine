@@ -2,7 +2,6 @@ use std::str::FromStr;
 use std::sync::{Arc};
 use histogram::Histogram;
 use std::time::{Duration, Instant};
-use indicatif::ProgressBar;
 use tokio::time::interval;
 use anyhow::{Context};
 use reqwest::{Method, StatusCode};
@@ -15,6 +14,7 @@ use jsonpath_lib::select;
 use crate::core::parse_form_data;
 use crate::core::sleep_guard::SleepGuard;
 use crate::core::status_share::{RESULT_QUEUE, SHOULD_STOP};
+use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::TestResult;
 use crate::models::assert_option::AssertOption;
@@ -53,8 +53,10 @@ pub async fn run(
     let mut handles = Vec::new();
     // 统计响应大小
     let total_response_size = Arc::new(Mutex::new(0u64));
-    // 统计错误
+    // 统计http错误
     let http_errors = Arc::new(Mutex::new(HttpErrorStats::new()));
+    // 统计断言错误
+    let assert_errors = Arc::new(Mutex::new(AssertErrorStats::new()));
     // 校验如果json和form同时发送，直接报错
     if json_str.is_some() && form_data_str.is_some(){
         return Err(anyhow::Error::msg("json和form不允许同时发送"));
@@ -147,6 +149,8 @@ pub async fn run(
         let total_requests_clone = total_requests.clone();
         // http错误副本
         let http_errors_clone = http_errors.clone();
+        // 断言错误副本
+        let assert_errors_clone = assert_errors.clone();
         // headers副本
         let header_map_clone = header_map.clone();
         // 断言(支持多个)
@@ -236,6 +240,7 @@ pub async fn run(
                                     let mut total_size = total_response_size_clone.lock().await;
                                     *total_size += content_length;
                                 }
+                                let url_string = response.url().to_string();
 
                                 let body_bytes = match response.bytes().await {
                                         Ok(bytes) => {
@@ -292,7 +297,8 @@ pub async fn run(
                                                     if *result != assert_option.reference_object{
                                                         // 断言失败， 失败次数+1
                                                         *err_count_clone.lock().await += 1;
-                                                        // todo: 将失败情况加入到一个容器中
+                                                        // 将失败情况加入到一个容器中
+                                                        assert_errors_clone.lock().await.increment(String::from(url_string), format!("预期结果：{:?}, 实际结果：{:?}", assert_option.reference_object, result));
                                                         eprintln!("断言失败，预期结果：{:?}, 实际结果：{:?}", assert_option.reference_object, result);
                                                         // 退出断言
                                                         break;
@@ -351,6 +357,7 @@ pub async fn run(
         let err_count_clone = Arc::clone(&err_count);
         let max_resp_time_clone = Arc::clone(&max_response_time);
         let min_resp_time_clone = Arc::clone(&min_response_time);
+        let assert_error_clone = Arc::clone(&assert_errors);
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(1));
@@ -368,6 +375,7 @@ pub async fn run(
                 let total_response_size_kb = *total_response_size_clone.lock().await as f64 / 1024.0;
                 let throughput_kb_s = total_response_size_kb / total_duration;
                 let http_errors = http_errors_clone.lock().await.errors.clone();
+                let assert_errors = assert_error_clone.lock().await.errors.clone();
                 let rps = successful_requests / total_duration;
                 let resp_median_line = match  histogram.percentile(50.0){
                     Ok(bucket) => *bucket.range().start(),
@@ -406,43 +414,17 @@ pub async fn run(
                     total_data_kb:total_response_size_kb,
                     throughput_per_second_kb: throughput_kb_s,
                     http_errors: http_errors.lock().unwrap().clone(),
-                    timestamp
+                    timestamp,
+                    assert_errors: assert_errors.lock().unwrap().clone(),
                 });
             }
         });
     }
 
-
-    // 根据条件判断是否打印进度条，和等待所有任务完成
-    match verbose{
-        true => {
-            for handle in handles {
-                handle.await.unwrap();
-            }
-        }
-        false => {
-            let pb = ProgressBar::new(100);
-            let progress_interval = Duration::from_millis(300);
-            let mut interval = interval(progress_interval);
-            tokio::spawn(async move {
-                while Instant::now() < test_end {
-                    interval.tick().await;
-                    let elapsed = Instant::now().duration_since(test_start).as_secs_f64();
-                    let progress = (elapsed / test_duration_secs as f64) * 100.0;
-                    pb.set_position(progress as u64);
-                }
-                pb.finish_and_clear();
-            }).await.unwrap();
-            let bar = ProgressBar::new_spinner();
-            bar.enable_steady_tick(Duration::from_millis(100));
-            bar.set_message("等待所有请求响应");
-            for handle in handles {
-                handle.await.unwrap();
-            }
-            bar.finish_with_message("");
-            bar.finish();
-        }
+    for handle in handles {
+        handle.await.unwrap();
     }
+
     // 计算返回数据
     let total_duration = (Instant::now() - test_start).as_secs_f64();
     let total_requests = *total_requests.lock().await as f64;
@@ -452,6 +434,7 @@ pub async fn run(
     let total_response_size_kb = *total_response_size.lock().await as f64 / 1024.0;
     let throughput_kb_s = total_response_size_kb / test_duration_secs as f64;
     let http_errors = http_errors.lock().await.errors.clone();
+    let assert_errors = assert_errors.lock().await.errors.clone();
     let err_count_clone = Arc::clone(&err_count);
     let timestamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(n) => n.as_millis(),
@@ -472,7 +455,8 @@ pub async fn run(
         total_data_kb:total_response_size_kb,
         throughput_per_second_kb: throughput_kb_s,
         http_errors: http_errors.lock().unwrap().clone(),
-        timestamp
+        timestamp,
+        assert_errors: assert_errors.lock().unwrap().clone(),
     };
     let mut should_stop = SHOULD_STOP.lock();
     *should_stop = true;
