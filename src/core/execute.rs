@@ -17,6 +17,7 @@ use crate::core::sleep_guard::SleepGuard;
 use crate::core::status_share::{RESULT_QUEUE, SHOULD_STOP};
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::TestResult;
+use crate::models::assert_option::AssertOption;
 
 pub async fn run(
     url: &str,
@@ -30,8 +31,7 @@ pub async fn run(
     headers: Option<Vec<String>>,
     cookie: Option<String>,
     should_prevent: bool,
-    assert_json_path: Option<String>,
-    assert_reference_object: Option<Value>
+    assert_options: Option<Vec<AssertOption>>
 ) -> anyhow::Result<TestResult> {
     // 阻止电脑休眠
     let _guard = SleepGuard::new(should_prevent);
@@ -101,14 +101,7 @@ pub async fn run(
             Arc::new(Some(form_data))
         }
     };
-    // TODO： 添加校验，如果有了assert_json_path的时候，必须有断言方法
-    let assert_json_path:Arc<Option<String>> = match assert_json_path {
-        None => Arc::new(None),
-        Some(ajp) => {
-            Arc::new(Some(ajp))
-        }
-    };
-    let assert_reference_object:Arc<Option<Value>> = match assert_reference_object {
+    let assert_options:Arc<Option<Vec<AssertOption>>> = match assert_options{
         None => Arc::new(None),
         Some(v) => {
             Arc::new(Some(v))
@@ -156,10 +149,8 @@ pub async fn run(
         let http_errors_clone = http_errors.clone();
         // headers副本
         let header_map_clone = header_map.clone();
-        // jsonpath的路径
-        let assert_json_path_clone = assert_json_path.clone();
-        // 断言参对象
-        let assert_reference_object_clone = assert_reference_object.clone();
+        // 断言(支持多个)
+        let assert_options_clone = assert_options.clone();
         // 开启异步
         let handle = tokio::spawn(async move {
             // 计时
@@ -262,56 +253,61 @@ pub async fn run(
                                     let buffer = String::from_utf8(body_bytes_clone.expect("none").to_vec()).expect("无法转换响应体为字符串");
                                     println!("{:+?}", buffer);
                                 }
-
-                                // 如果传入了jsonpath
-                                if let Some(json_path) = &*assert_json_path_clone {
-                                    match body_bytes {
+                                // 如果需要断言
+                                if let Some(assert_options) = &*assert_options_clone{
+                                    // 将响应体解析成字节码
+                                    let body_bytes = match body_bytes{
                                         None => {
-                                            eprintln!("响应body为空，无法使用jsonpath获取到数据")
+                                            eprintln!("响应body为空，无法使用jsonpath获取到数据");
+                                            continue
                                         }
-                                        Some(bytes) => {
-                                            match serde_json::from_slice(&*bytes){
-                                                Ok(val) =>{
-                                                    match select(&val, json_path) {
-                                                        Ok(results) => {
-                                                            if results.is_empty(){
-                                                                eprintln!("没有匹配到任何结果");
-                                                                continue
-                                                            }
-                                                            if results.len() >1{
-                                                                eprintln!("匹配到多个值，无法进行断言");
-                                                                continue
-                                                            }
-                                                            if let Some(result) = results.get(0).map(|&v|v) {
-                                                                match Arc::as_ref(&assert_reference_object_clone) {
-                                                                    None => {
-                                                                        eprintln!("没有获取到断言参照对象");
-                                                                        continue
-                                                                    }
-                                                                    Some(reference_object) => {
-                                                                        if result != reference_object{
-                                                                            // 断言失败
-                                                                            // 失败次数+1
-                                                                            *err_count_clone.lock().await += 1;
-                                                                            // todo: 将失败情况加入到一个容器中
-                                                                            eprintln!("断言失败，预期结果：{:?}, 实际结果：{:?}", reference_object, result);
-                                                                            continue
-                                                                        }
-                                                                    }
-                                                                };
-                                                            }
-                                                        },
-                                                        Err(e) => eprintln!("JSONPath 查询失败: {}", e),
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    eprintln!("json转换提取失败:{:?}", e)
-                                                }
-                                            };
+                                        Some(bytes) =>{
+                                            bytes
                                         }
                                     };
+                                    // 多断言
+                                    for assert_option in assert_options {
+                                        let json_value: Value = match serde_json::from_slice(&*body_bytes) {
+                                            Err(e) =>{
+                                                eprintln!("JSONPath 查询失败: {}", e);
+                                                break;
+                                            }
+                                            Ok(val) => {
+                                                val
+                                            }
+                                        };
+                                        // 通过jsonpath提取数据
+                                        match select(&json_value, &*assert_option.jsonpath) {
+                                            Ok(results) => {
+                                                if results.is_empty(){
+                                                    eprintln!("没有匹配到任何结果");
+                                                    break;
+                                                }
+                                                if results.len() >1{
+                                                    eprintln!("匹配到多个值，无法进行断言");
+                                                    break;
+                                                }
+                                                // 取出匹配到的唯一值
+                                                if let Some(result) = results.get(0).map(|&v|v) {
+                                                    if *result != assert_option.reference_object{
+                                                        // 断言失败， 失败次数+1
+                                                        *err_count_clone.lock().await += 1;
+                                                        // todo: 将失败情况加入到一个容器中
+                                                        eprintln!("断言失败，预期结果：{:?}, 实际结果：{:?}", assert_option.reference_object, result);
+                                                        // 退出断言
+                                                        break;
+                                                    }
+                                                }
+                                            },
+                                            Err(e) => {
+                                                eprintln!("JSONPath 查询失败: {}", e);
+                                                break;
+                                            },
+                                        }
+                                    }
 
                                 }
+
                                 // 正确统计+1
                                 *successful_requests_clone.lock().await += 1;
                             }
