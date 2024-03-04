@@ -202,6 +202,7 @@ pub async fn run(
                 if let Some(form_map) = &*form_map_clone{
                     request = request.form(form_map);
                 }
+                let url_string = url.to_string();
                 // 开始发送请求
                 match request.send().await {
                     // 请求成功
@@ -322,7 +323,8 @@ pub async fn run(
                                 *err_count_clone.lock().await += 1;
                                 let status_code = u16::from(response.status());
                                 let err_msg = format!("HTTP 错误: 状态码 {}", status_code);
-                                http_errors_clone.lock().await.increment(status_code, err_msg);
+                                let url = response.url().to_string();
+                                http_errors_clone.lock().await.increment(status_code, err_msg, url);
                             }
                         }
                     },
@@ -339,7 +341,7 @@ pub async fn run(
                             }
                         }
                         let err_msg = e.to_string();
-                        http_errors_clone.lock().await.increment(status_code, err_msg);
+                        http_errors_clone.lock().await.increment(status_code, err_msg, url_string);
                     }
                 }
             }
