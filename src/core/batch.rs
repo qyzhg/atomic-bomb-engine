@@ -433,6 +433,9 @@ pub async fn batch(
             },
         }
     }
+    println!("1");
+    let results_clone = apis_results.lock().await.clone();
+
 
     Ok(BatchResult{
         total_duration: 0.0,
@@ -450,7 +453,7 @@ pub async fn batch(
         http_errors: Default::default(),
         timestamp: 0,
         assert_errors: Default::default(),
-        api_results: Default::default(),
+        api_results:results_clone,
     })
 }
 
@@ -465,6 +468,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch() {
+        println!("3");
         let mut assert_vec: Vec<AssertOption> = Vec::new();
         let ref_obj = Value::from(20);
         assert_vec.push(AssertOption{ jsonpath: "$.code".to_string(), reference_object: ref_obj });
@@ -491,6 +495,8 @@ mod tests {
             cookies: None,
             assert_options: None,
         });
-        let _ = batch(10, 100, false, false, endpoints).await;
+        println!("2");
+        let result = batch(10, 100, false, false, endpoints).await;
+        println!("{:?}", result)
     }
 }
