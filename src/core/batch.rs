@@ -1,3 +1,4 @@
+use std::fmt::format;
 use std::str::FromStr;
 use std::sync::{Arc};
 use histogram::Histogram;
@@ -83,7 +84,7 @@ pub async fn batch(
                 client_builder.build().context("构建http客户端失败")?
             };
             // 开启并发
-            let handle: tokio::task::JoinHandle<Result<(), anyhow::Error>> = tokio::spawn(async move {
+            let handle: tokio::task::JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                 while Instant::now() < test_end {
                     *total_requests_clone.lock().await += 1;
                     // name副本
@@ -100,10 +101,35 @@ pub async fn batch(
                     let cookie_clone = endpoint_clone.lock().await.cookies.clone();
                     // 断言副本
                     let assert_options_clone = endpoint_clone.lock().await.assert_options.clone();
-
+                    // 构建请求方式
                     let method = Method::from_str(&method_clone.to_uppercase()).map_err(|_| Error::msg("构建请求方法失败"))?;
-
+                    // 构建请求
                     let mut request = client.request(method, url_clone);
+                    // 构建请求头
+                    let mut headers = HeaderMap::new();
+                    if let Some(headers_map) = headers_clone {
+                        headers.extend(headers_map.iter().map(|(k, v)| {
+                            let header_name = k.parse::<HeaderName>().expect("无效的header名称");
+                            let header_value = v.parse::<HeaderValue>().expect("无效的header值");
+                            (header_name, header_value)
+                        }));
+                    }
+                    // 构建cookies
+                    if let Some(ref c) = cookie_clone{
+                        match HeaderValue::from_str(c){
+                            Ok(h) => {
+                                headers.insert(COOKIE, h);
+                            },
+                            Err(e) =>{
+                                return Err(Error::msg(format!("设置cookie失败:{:?}", e)))
+                            }
+                        }
+                    }
+                    // 构建json请求
+                    if let Some(json_value) = json_obj_clone{
+                        request = request.json(&json_value);
+                    }
+                    // 发送请求
                     match request.send().await {
                         Ok(response) => {
                             if verbose {
