@@ -71,12 +71,28 @@ pub async fn batch(
         }
         // 根据权重算出来每个接口的并发量
         for _ in 0..concurrency_for_endpoint {
+            // 数据桶副本
+            let histogram_clone = histogram.clone();
             // 总请求数记录副本
             let total_requests_clone = Arc::clone(&total_requests);
-            // 每个接口端点克隆
+            // 每个接口端点副本
             let endpoint_clone = Arc::clone(endpoint_arc);
+            // 最大响应时间副本
+            let max_response_time_clone = max_response_time.clone();
+            // 响应大小统计副本
+            let total_response_size_clone = total_response_size.clone();
+            // 最小响应时间副本
+            let min_response_time_clone = min_response_time.clone();
+            // 错误次数副本
+            let err_count_clone = err_count.clone();
+            // 断言错误副本
+            let assert_errors_clone = assert_errors.clone();
+            // 成功次数副本
+            let successful_requests_clone = successful_requests.clone();
+            // http错误副本
+            let http_errors_clone = http_errors.clone();
             // 构建http客户端
-            let client_builder = reqwest::Client::builder();
+            let client_builder = Client::builder();
             // 如果有超时时间就将client设置
             let client = if endpoint_clone.lock().await.timeout_secs > 0 {
                 client_builder.timeout(Duration::from_secs(endpoint_clone.lock().await.timeout_secs)).build().context("构建带超时的http客户端失败")?
@@ -89,8 +105,6 @@ pub async fn batch(
                     *total_requests_clone.lock().await += 1;
                     // name副本
                     let name_clone = endpoint_clone.lock().await.name.clone();
-                    // url副本
-                    let url_clone = endpoint_clone.lock().await.url.clone();
                     // 请求方法副本
                     let method_clone = endpoint_clone.lock().await.method.clone();
                     // json副本
@@ -104,7 +118,7 @@ pub async fn batch(
                     // 构建请求方式
                     let method = Method::from_str(&method_clone.to_uppercase()).map_err(|_| Error::msg("构建请求方法失败"))?;
                     // 构建请求
-                    let mut request = client.request(method, url_clone);
+                    let mut request = client.request(method, endpoint_clone.lock().await.url.clone());
                     // 构建请求头
                     let mut headers = HeaderMap::new();
                     if let Some(headers_map) = headers_clone {
@@ -129,15 +143,156 @@ pub async fn batch(
                     if let Some(json_value) = json_obj_clone{
                         request = request.json(&json_value);
                     }
+                    // 记录开始时间
+                    let start = Instant::now();
                     // 发送请求
                     match request.send().await {
                         Ok(response) => {
-                            if verbose {
-                                println!("{:?}", response.text().await.unwrap());
+                            let status = response.status();
+                            match status{
+                                // 正确的状态码
+                                StatusCode::OK |
+                                StatusCode::CREATED |
+                                StatusCode::ACCEPTED |
+                                StatusCode::NON_AUTHORITATIVE_INFORMATION |
+                                StatusCode::NO_CONTENT |
+                                StatusCode::RESET_CONTENT |
+                                StatusCode::PARTIAL_CONTENT |
+                                StatusCode::MULTI_STATUS |
+                                StatusCode::ALREADY_REPORTED |
+                                StatusCode::IM_USED |
+                                StatusCode::MULTIPLE_CHOICES |
+                                StatusCode::MOVED_PERMANENTLY |
+                                StatusCode::FOUND |
+                                StatusCode::SEE_OTHER |
+                                StatusCode::NOT_MODIFIED |
+                                StatusCode::USE_PROXY |
+                                StatusCode::TEMPORARY_REDIRECT |
+                                StatusCode::PERMANENT_REDIRECT => {
+                                    // 响应时间
+                                    let duration = start.elapsed().as_millis() as u64;
+                                    // 最大请求时间
+                                    let mut max_rt = max_response_time_clone.lock().await;
+                                    *max_rt = (*max_rt).max(duration);
+                                    // 最小响应时间
+                                    let mut min_rt = min_response_time_clone.lock().await;
+                                    *min_rt = (*min_rt).min(duration);
+                                    // 将数据放入统计桶
+                                    if let Err(e) = histogram_clone.lock().await.increment(duration){
+                                        eprintln!("histogram设置数据错误:{:?}", e)
+                                    };
+                                    // 吞吐量统计
+                                    if let Some(content_length) = response.content_length() {
+                                        let mut total_size = total_response_size_clone.lock().await;
+                                        *total_size += content_length;
+                                    }
+                                    // 获取响应
+                                    let body_bytes = match response.bytes().await {
+                                        Ok(bytes) => {
+                                            Some(bytes)
+                                        },
+                                        Err(e) => {
+                                            eprintln!("读取响应失败:{:?}", e.to_string());
+                                            None
+                                        }
+                                    };
+                                    if verbose {
+                                        let body_bytes_clone = body_bytes.clone();
+                                        let buffer = String::from_utf8(body_bytes_clone.expect("none").to_vec()).expect("无法转换响应体为字符串");
+                                        println!("{:+?}", buffer);
+                                    }
+                                    // 断言
+                                    if let Some(assert_options) = assert_options_clone{
+                                        // 将响应体解析成字节码
+                                        let body_bytes = match body_bytes{
+                                            None => {
+                                                eprintln!("响应body为空，无法使用jsonpath获取到数据");
+                                                continue
+                                            }
+                                            Some(bytes) =>{
+                                                bytes
+                                            }
+                                        };
+                                        // 多断言
+                                        for assert_option in assert_options {
+                                            let json_value: Value = match serde_json::from_slice(&*body_bytes) {
+                                                Err(e) =>{
+                                                    eprintln!("JSONPath 查询失败: {}", e);
+                                                    break;
+                                                }
+                                                Ok(val) => {
+                                                    val
+                                                }
+                                            };
+                                            // 通过jsonpath提取数据
+                                            match select(&json_value, &*assert_option.jsonpath) {
+                                                Ok(results) => {
+                                                    if results.is_empty(){
+                                                        eprintln!("没有匹配到任何结果");
+                                                        break;
+                                                    }
+                                                    if results.len() >1{
+                                                        eprintln!("匹配到多个值，无法进行断言");
+                                                        break;
+                                                    }
+                                                    // 取出匹配到的唯一值
+                                                    if let Some(result) = results.get(0).map(|&v|v) {
+                                                        if *result != assert_option.reference_object{
+                                                            // 断言失败， 失败次数+1
+                                                            *err_count_clone.lock().await += 1;
+                                                            // 将失败情况加入到一个容器中
+                                                            assert_errors_clone.
+                                                                lock().
+                                                                await.
+                                                                increment(
+                                                                    String::from(endpoint_clone.lock().await.url.clone()),
+                                                                    format!(
+                                                                        "预期结果：{:?}, 实际结果：{:?}", assert_option.reference_object, result
+                                                                    )
+                                                                );
+                                                            if verbose{
+                                                                eprintln!("预期结果：{:?}, 实际结果：{:?}", assert_option.reference_object, result)
+                                                            }
+                                                            // 退出断言
+                                                            break;
+                                                        }
+                                                    }
+                                                },
+                                                Err(e) => {
+                                                    eprintln!("JSONPath 查询失败: {}", e);
+                                                    break;
+                                                },
+                                            }
+                                        }
+
+                                    }
+                                    // 正确统计+1
+                                    *successful_requests_clone.lock().await += 1;
+                                }
+                                // 状态码错误
+                                _ =>{
+                                    *err_count_clone.lock().await += 1;
+                                    let status_code = u16::from(response.status());
+                                    let err_msg = format!("HTTP 错误: 状态码 {}", status_code);
+                                    let url = response.url().to_string();
+                                    http_errors_clone.lock().await.increment(status_code, err_msg, url);
+                                }
                             }
+
                         },
-                        Err(e) => if verbose {
-                            eprintln!("Error: {:?}", e);
+                        Err(e) => {
+                            *err_count_clone.lock().await += 1;
+                            let status_code: u16;
+                            match e.status(){
+                                None => {
+                                    status_code = 0;
+                                }
+                                Some(code) => {
+                                    status_code = u16::from(code);
+                                }
+                            }
+                            let err_msg = e.to_string();
+                            http_errors_clone.lock().await.increment(status_code, err_msg, endpoint_clone.lock().await.url.clone());
                         },
                     }
                 }
@@ -197,18 +352,32 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch() {
+        let mut assert_vec: Vec<AssertOption> = Vec::new();
+        let ref_obj = Value::from(20);
+        assert_vec.push(AssertOption{ jsonpath: "$.code".to_string(), reference_object: ref_obj });
         let mut endpoints: Vec<ApiEndpoint> = Vec::new();
         endpoints.push(ApiEndpoint{
             name: "test1".to_string(),
-            url: "https://ooooo.run/yAJSIg".to_string(),
+            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
             method: "GET".to_string(),
             timeout_secs: 0,
             weight: 1,
             json: None,
             headers: None,
             cookies: None,
-            assert_options: None,
+            assert_options: Some(assert_vec.clone()),
         });
-        let _ = batch(10, 10, false, false, endpoints).await;
+        endpoints.push(ApiEndpoint{
+            name: "test1".to_string(),
+            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+            method: "GET".to_string(),
+            timeout_secs: 0,
+            weight: 1,
+            json: None,
+            headers: None,
+            cookies: None,
+            assert_options: Some(assert_vec.clone()),
+        });
+        let _ = batch(10, 1, false, false, endpoints).await;
     }
 }
