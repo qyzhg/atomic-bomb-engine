@@ -60,7 +60,9 @@ pub async fn batch(
     let test_end = test_start + Duration::from_secs(test_duration_secs);
     // 针对每一个接口开始配置
     for endpoint_arc in api_endpoints_arc.iter() {
+        // 计算权重比例
         let weight_ratio = endpoint_arc.lock().await.weight as f64 / total_weight as f64;
+        // 计算每个接口的并发量
         let mut concurrency_for_endpoint = ((concurrent_requests as f64) * weight_ratio).round() as usize;
         // 如果这个接口的并发量四舍五入成0了， 就把他定为1
         if concurrency_for_endpoint == 0{
@@ -68,17 +70,40 @@ pub async fn batch(
         }
         // 根据权重算出来每个接口的并发量
         for _ in 0..concurrency_for_endpoint {
+            // 总请求数记录副本
             let total_requests_clone = Arc::clone(&total_requests);
+            // 每个接口端点克隆
             let endpoint_clone = Arc::clone(endpoint_arc);
             // 构建http客户端
-            let client = Client::builder().build().unwrap();
+            let client_builder = reqwest::Client::builder();
+            // 如果有超时时间就将client设置
+            let client = if endpoint_clone.lock().await.timeout_secs > 0 {
+                client_builder.timeout(Duration::from_secs(endpoint_clone.lock().await.timeout_secs)).build().context("构建带超时的http客户端失败")?
+            } else {
+                client_builder.build().context("构建http客户端失败")?
+            };
             // 开启并发
-            let handle = tokio::spawn(async move {
+            let handle: tokio::task::JoinHandle<Result<(), anyhow::Error>> = tokio::spawn(async move {
                 while Instant::now() < test_end {
                     *total_requests_clone.lock().await += 1;
-                    let url = endpoint_clone.lock().await.url.clone();
-                    let method = Method::from_str(&endpoint_clone.lock().await.method.to_uppercase()).unwrap();
-                    let mut request = client.request(method, url);
+                    // name副本
+                    let name_clone = endpoint_clone.lock().await.name.clone();
+                    // url副本
+                    let url_clone = endpoint_clone.lock().await.url.clone();
+                    // 请求方法副本
+                    let method_clone = endpoint_clone.lock().await.method.clone();
+                    // json副本
+                    let json_obj_clone = endpoint_clone.lock().await.json.clone();
+                    // headers副本
+                    let headers_clone = endpoint_clone.lock().await.headers.clone();
+                    // cookie副本
+                    let cookie_clone = endpoint_clone.lock().await.cookies.clone();
+                    // 断言副本
+                    let assert_options_clone = endpoint_clone.lock().await.assert_options.clone();
+
+                    let method = Method::from_str(&method_clone.to_uppercase()).map_err(|_| Error::msg("构建请求方法失败"))?;
+
+                    let mut request = client.request(method, url_clone);
                     match request.send().await {
                         Ok(response) => {
                             if verbose {
@@ -90,13 +115,30 @@ pub async fn batch(
                         },
                     }
                 }
+                Ok(())
             });
 
             handles.push(handle);
         }
     }
     for handle in handles {
-        let _ = handle.await.unwrap();
+        match handle.await {
+            Ok(result) => {
+                match result {
+                    Ok(_) => {
+                        if verbose {
+                            println!("任务成功完成")
+                        }
+                    },
+                    Err(e) => {
+                        return Err(Error::msg(format!("异步任务内部错误:{:?}", e)));
+                    },
+                }
+            },
+            Err(e) => {
+                return Err(Error::msg(format!("协程被取消或意外停止:{:?}", e)));
+            },
+        }
     }
 
     Ok(TestResult {
@@ -133,7 +175,7 @@ mod tests {
         endpoints.push(ApiEndpoint{
             name: "test1".to_string(),
             url: "https://ooooo.run/yAJSIg".to_string(),
-            method: "get".to_string(),
+            method: "GET".to_string(),
             timeout_secs: 0,
             weight: 1,
             json: None,
