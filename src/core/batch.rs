@@ -1,31 +1,30 @@
-use std::fmt::format;
+use std::collections::HashMap;
+use std::io::Write;
 use std::str::FromStr;
 use std::sync::{Arc};
 use histogram::Histogram;
-use std::time::{self,Duration, Instant};
-use tokio::time::interval;
+use std::time::{Duration, Instant};
 use anyhow::{Context, Error};
-use reqwest::{Client, Method, Response, StatusCode};
-use tokio::sync::{Mutex, Semaphore};
+use reqwest::{Client, Method, StatusCode};
+use tokio::sync::{Mutex};
 use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName};
 use serde_json::Value;
-use std::time::{SystemTime, UNIX_EPOCH};
 use jsonpath_lib::select;
 
 use crate::core::sleep_guard::SleepGuard;
-use crate::core::status_share::{RESULT_QUEUE, SHOULD_STOP};
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
-use crate::models::result::TestResult;
+use crate::models::result::{ApiResult, BatchResult};
 use crate::models::assert_option::AssertOption;
 use crate::models::api_endpoint::ApiEndpoint;
+
 pub async fn batch(
     test_duration_secs: u64,
     concurrent_requests: usize,
     verbose: bool,
     should_prevent: bool,
     api_endpoints: Vec<ApiEndpoint>
-) -> anyhow::Result<TestResult> {
+) -> anyhow::Result<BatchResult> {
     // 阻止电脑休眠
     let _guard = SleepGuard::new(should_prevent);
     // 总响应时间统计
@@ -55,12 +54,58 @@ pub async fn batch(
         .into_iter()
         .map(|endpoint| Arc::new(Mutex::new(endpoint)))
         .collect();
+    // 分接口的统计值
+    let apis_results_map: HashMap<String, ApiResult> = HashMap::new();
+    // 分接口统计桶
+    let apis_histogram_map: HashMap<String, Histogram> = HashMap::new();
+    // 分接口最大时间
+    let apis_max_response_time:HashMap<String, u64> = HashMap::new();
+    // 分接口最小时间
+     let apis_min_response_time:HashMap<String, u64> = HashMap::new();
+
+    // 接口响应时间统计
+    let mut apis_histogram = Arc::new(Mutex::new(apis_histogram_map));
+    // 接口结果统计
+    let mut apis_results = Arc::new(Mutex::new(apis_results_map));
+    // 最大响应时间统计
+    let mut apis_max_response_time = Arc::new(Mutex::new(apis_max_response_time));
+    // 最小响应时间统计
+    let mut apis_min_response_time = Arc::new(Mutex::new(apis_min_response_time));
+
     // 开始测试时间
     let test_start = Instant::now();
     // 测试结束时间
     let test_end = test_start + Duration::from_secs(test_duration_secs);
     // 针对每一个接口开始配置
     for endpoint_arc in api_endpoints_arc.iter() {
+        let key = format!("{:?}|{:?}", endpoint_arc.lock().await.method.clone().to_uppercase(), endpoint_arc.lock().await.url);
+        // 接口统计桶副本
+        let apis_histogram_clone = apis_histogram.clone();
+        // api统计的副本
+        let apis_results_clone = apis_results.clone();
+        // 接口最大响应时间
+        let apis_max_response_time_clone = apis_max_response_time.clone();
+        // 接口最小响应时间
+        let apis_min_response_time_clone = apis_min_response_time.clone();
+        // 初始化分接口统计的对象
+        apis_histogram_clone.lock().await.insert(key.clone(), Histogram::new(14, 20).unwrap());
+        apis_results_clone.lock().await.insert(key.clone(), ApiResult{
+            name: "".to_string(),
+            url: "".to_string(),
+            success_rate: 0.0,
+            median_response_time: 0,
+            response_time_95: 0,
+            response_time_99: 0,
+            total_requests: 0,
+            rps: 0.0,
+            max_response_time: 0,
+            min_response_time: 0,
+            err_count: 0,
+            total_data_kb: 0.0,
+            throughput_per_second_kb: 0.0,
+        });
+        apis_max_response_time_clone.lock().await.insert(key.clone(), 0);
+        apis_min_response_time_clone.lock().await.insert(key.clone(), 0);
         // 计算权重比例
         let weight_ratio = endpoint_arc.lock().await.weight as f64 / total_weight as f64;
         // 计算每个接口的并发量
@@ -91,6 +136,14 @@ pub async fn batch(
             let successful_requests_clone = successful_requests.clone();
             // http错误副本
             let http_errors_clone = http_errors.clone();
+            // key
+            let key_clone = key.clone();
+            //
+            let apis_histogram_clone = apis_histogram_clone.clone();
+            let apis_results_clone = apis_results_clone.clone();
+            let apis_max_response_time_clone = apis_max_response_time_clone.clone();
+            let apis_min_response_time_clone = apis_min_response_time_clone.clone();
+
             // 构建http客户端
             let client_builder = Client::builder();
             // 如果有超时时间就将client设置
@@ -171,16 +224,37 @@ pub async fn batch(
                                 StatusCode::PERMANENT_REDIRECT => {
                                     // 响应时间
                                     let duration = start.elapsed().as_millis() as u64;
-                                    // 最大请求时间
+                                    // 全局最大请求时间
                                     let mut max_rt = max_response_time_clone.lock().await;
                                     *max_rt = (*max_rt).max(duration);
-                                    // 最小响应时间
+                                    // api最大请求时间
+                                    if let Some(api_max_rt)  = apis_max_response_time_clone.lock().await.get(&key_clone){
+                                        if duration > *api_max_rt {
+                                            apis_max_response_time_clone.lock().await.insert(key_clone.clone(), duration);
+                                        }
+                                    }
+
+                                    // 全局最小响应时间
                                     let mut min_rt = min_response_time_clone.lock().await;
                                     *min_rt = (*min_rt).min(duration);
-                                    // 将数据放入统计桶
+                                    // api最小请求时间
+                                    if let Some(api_min_rt) = apis_min_response_time_clone.lock().await.get(&key_clone.clone()){
+                                        if duration < *api_min_rt{
+                                            apis_min_response_time_clone.lock().await.insert(key_clone.clone(), duration);
+                                        }
+                                    }
+
+                                    // 将数据放入全局统计桶
                                     if let Err(e) = histogram_clone.lock().await.increment(duration){
                                         eprintln!("histogram设置数据错误:{:?}", e)
                                     };
+
+                                    // 将数据放入接口统计桶
+                                    if let Some(h) = apis_histogram_clone.lock().await.get_mut(&key_clone.clone()){
+                                        if let Err(e) = h.increment(duration){
+                                            eprintln!("api histogram设置数据错误:{:?}", e);
+                                        };
+                                    }
                                     // 吞吐量统计
                                     if let Some(content_length) = response.content_length() {
                                         let mut total_size = total_response_size_clone.lock().await;
@@ -266,6 +340,44 @@ pub async fn batch(
                                         }
 
                                     }
+                                    // 更新api result
+                                    // todo: 接口总数，正确数， 错误数
+                                    // 获取50线，95线，99线
+                                    let lines = match apis_histogram_clone.lock().await.get(&key_clone) {
+                                        None => {
+                                            (0, 0, 0)
+                                        }
+                                        Some(api_histogram) => {
+                                            let mut line_50 = 0;
+                                            let mut line_95 = 0;
+                                            let mut line_99 = 0;
+                                            if let Ok(l50bucket) = api_histogram.percentile(50.0){
+                                                line_50 = *l50bucket.range().start()
+                                            }
+                                            if let Ok(l95bucket) = api_histogram.percentile(95.0){
+                                                line_95 = *l95bucket.range().start()
+                                            }
+                                            if let Ok(l99bucket) = api_histogram.percentile(99.0){
+                                                line_99 = *l99bucket.range().start()
+                                            }
+                                            (line_50, line_95, line_99)
+                                        }
+                                    };
+                                    apis_results_clone.lock().await.insert(key_clone.clone(), ApiResult{
+                                        name: name_clone,
+                                        url: endpoint_clone.lock().await.url.clone(),
+                                        success_rate: 0.0,
+                                        median_response_time: lines.0,
+                                        response_time_95: lines.1,
+                                        response_time_99: lines.2,
+                                        total_requests: 0,
+                                        rps: 0.0,
+                                        max_response_time: 0,
+                                        min_response_time: 0,
+                                        err_count: 0,
+                                        total_data_kb: 0.0,
+                                        throughput_per_second_kb: 0.0,
+                                    });
                                     // 正确统计+1
                                     *successful_requests_clone.lock().await += 1;
                                 }
@@ -322,7 +434,7 @@ pub async fn batch(
         }
     }
 
-    Ok(TestResult {
+    Ok(BatchResult{
         total_duration: 0.0,
         success_rate: 0.0,
         median_response_time: 0,
@@ -338,6 +450,7 @@ pub async fn batch(
         http_errors: Default::default(),
         timestamp: 0,
         assert_errors: Default::default(),
+        api_results: Default::default(),
     })
 }
 
@@ -361,23 +474,23 @@ mod tests {
             url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
             method: "GET".to_string(),
             timeout_secs: 0,
-            weight: 1,
+            weight: 3,
             json: None,
             headers: None,
             cookies: None,
             assert_options: Some(assert_vec.clone()),
         });
         endpoints.push(ApiEndpoint{
-            name: "test1".to_string(),
-            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+            name: "test2".to_string(),
+            url: "https://ooooo.run/3Q12fq".to_string(),
             method: "GET".to_string(),
             timeout_secs: 0,
             weight: 1,
             json: None,
             headers: None,
             cookies: None,
-            assert_options: Some(assert_vec.clone()),
+            assert_options: None,
         });
-        let _ = batch(10, 1, false, false, endpoints).await;
+        let _ = batch(10, 100, false, false, endpoints).await;
     }
 }
