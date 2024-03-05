@@ -18,7 +18,6 @@ use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::TestResult;
 use crate::models::assert_option::AssertOption;
 use crate::models::api_endpoint::ApiEndpoint;
-#[cfg(feature = "todo")]
 pub async fn batch(
     test_duration_secs: u64,
     concurrent_requests: usize,
@@ -56,21 +55,29 @@ pub async fn batch(
     let semaphore = Arc::new(Mutex::new(Semaphore::new(concurrent_requests)));
     // 结束时间
     let test_end = Instant::now() + Duration::from_secs(test_duration_secs);
+    // 用arc包装每一个endpoint
+    let api_endpoints_arc: Vec<Arc<Mutex<ApiEndpoint>>> = api_endpoints
+        .into_iter()
+        .map(|endpoint| Arc::new(Mutex::new(endpoint)))
+        .collect();
     // 针对每一个接口开始配置
-    for endpoint in api_endpoints {
-        let weight_ratio = endpoint.weight as f64 / total_weight as f64;
+    for endpoint_arc in api_endpoints_arc.iter() {
+        let semaphore_clone = Arc::clone(&semaphore);
+        let total_requests_clone = Arc::clone(&total_requests);
+        let endpoint_clone = Arc::clone(endpoint_arc);
+        let weight_ratio = endpoint_arc.lock().await.weight as f64 / total_weight as f64;
         let concurrency_for_endpoint = (concurrent_requests as f64 * weight_ratio).round() as usize;
-        let endpoint_clone = Arc::new(Mutex::new(endpoint));
-        // 请求次数副本
-        let total_requests_clone = total_requests.clone();
-        // 开启异步
         let handle = tokio::spawn(async move {
-            let mut interval = interval(test_duration / concurrency_for_endpoint as u32);
             for _ in 0..concurrency_for_endpoint {
-                let semaphore_clone = Arc::clone(&semaphore);
+                let semaphore_clone = Arc::clone(&semaphore_clone);
+                let total_requests_clone = Arc::clone(&total_requests_clone);
+                let endpoint_clone = Arc::clone(&endpoint_clone);
+                let mut interval = tokio::time::interval(test_duration / concurrency_for_endpoint as u32);
                 tokio::spawn(async move {
                     while Instant::now() < test_end {
-                        let _permit = semaphore_clone.lock().await.acquire().await.expect("TODO: panic message");
+                        interval.tick().await; // 这里是请求间隔，如果太慢就注释掉
+                        let semaphore_guard = semaphore_clone.lock().await; // 第一步：获取锁
+                        let _permit = semaphore_guard.acquire().await.expect("Failed to acquire semaphore permit"); // 第二步：获取许可
                         /*
                             构建请求体
                         */
@@ -80,7 +87,7 @@ pub async fn batch(
                         // 记录当前接口开始时间
                         let start = Instant::now();
                         // 构建请求方法
-                        let method = Method::from_str(&*endpoint_clone.lock().await.method.to_uppercase()).expect("无效的方法");
+                        let method = Method::from_str(&*endpoint_clone.lock().await.method.to_uppercase()).expect("Invalid method");
                         // 构建http客户端
                         let client_builder = reqwest::Client::builder();
                         // 构建client
@@ -100,7 +107,7 @@ pub async fn batch(
                             }
                         };
                     }
-                });
+                }).await.expect("xxx");
             }
         });
         handles.push(handle);
