@@ -4,7 +4,7 @@ use histogram::Histogram;
 use std::time::{self,Duration, Instant};
 use tokio::time::interval;
 use anyhow::{Context, Error};
-use reqwest::{Client, Method, StatusCode};
+use reqwest::{Client, Method, Response, StatusCode};
 use tokio::sync::{Mutex, Semaphore};
 use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName};
 use serde_json::Value;
@@ -49,71 +49,54 @@ pub async fn batch(
     let assert_errors = Arc::new(Mutex::new(AssertErrorStats::new()));
     // 总权重
     let total_weight: u32 = api_endpoints.iter().map(|e| e.weight).sum();
-    // 持续时间
-    let test_duration = Duration::from_secs(test_duration_secs);
-    // 并发量控制
-    let semaphore = Arc::new(Mutex::new(Semaphore::new(concurrent_requests)));
-    // 结束时间
-    let test_end = Instant::now() + Duration::from_secs(test_duration_secs);
     // 用arc包装每一个endpoint
     let api_endpoints_arc: Vec<Arc<Mutex<ApiEndpoint>>> = api_endpoints
         .into_iter()
         .map(|endpoint| Arc::new(Mutex::new(endpoint)))
         .collect();
+    // 开始测试时间
+    let test_start = Instant::now();
+    // 测试结束时间
+    let test_end = test_start + Duration::from_secs(test_duration_secs);
     // 针对每一个接口开始配置
     for endpoint_arc in api_endpoints_arc.iter() {
-        let semaphore_clone = Arc::clone(&semaphore);
-        let total_requests_clone = Arc::clone(&total_requests);
-        let endpoint_clone = Arc::clone(endpoint_arc);
         let weight_ratio = endpoint_arc.lock().await.weight as f64 / total_weight as f64;
-        let concurrency_for_endpoint = (concurrent_requests as f64 * weight_ratio).round() as usize;
-        let handle = tokio::spawn(async move {
-            for _ in 0..concurrency_for_endpoint {
-                let semaphore_clone = Arc::clone(&semaphore_clone);
-                let total_requests_clone = Arc::clone(&total_requests_clone);
-                let endpoint_clone = Arc::clone(&endpoint_clone);
-                let mut interval = tokio::time::interval(test_duration / concurrency_for_endpoint as u32);
-                tokio::spawn(async move {
-                    while Instant::now() < test_end {
-                        interval.tick().await; // 这里是请求间隔，如果太慢就注释掉
-                        let semaphore_guard = semaphore_clone.lock().await; // 第一步：获取锁
-                        let _permit = semaphore_guard.acquire().await.expect("Failed to acquire semaphore permit"); // 第二步：获取许可
-                        /*
-                            构建请求体
-                        */
-                        
-                        // 总请求数+1
-                        *total_requests_clone.lock().await += 1;
-                        // 记录当前接口开始时间
-                        let start = Instant::now();
-                        // 构建请求方法
-                        let method = Method::from_str(&*endpoint_clone.lock().await.method.to_uppercase()).expect("Invalid method");
-                        // 构建http客户端
-                        let client_builder = reqwest::Client::builder();
-                        // 构建client
-                        let client = if endpoint_clone.lock().await.timeout_secs > 0 {
-                            client_builder.timeout(Duration::from_secs(endpoint_clone.lock().await.timeout_secs)).build().context("构建带超时的http客户端失败")
-                        } else {
-                            client_builder.build().context("构建http客户端失败")
-                        };
-                        // 构建request
-                        let mut request = match client{
-                            Ok(cli) => {
-                                cli.request(method, endpoint_clone.lock().await.url.clone())
+        let mut concurrency_for_endpoint = ((concurrent_requests as f64) * weight_ratio).round() as usize;
+        // 如果这个接口的并发量四舍五入成0了， 就把他定为1
+        if concurrency_for_endpoint == 0{
+            concurrency_for_endpoint = 1
+        }
+        // 根据权重算出来每个接口的并发量
+        for _ in 0..concurrency_for_endpoint {
+            let total_requests_clone = Arc::clone(&total_requests);
+            let endpoint_clone = Arc::clone(endpoint_arc);
+            // 构建http客户端
+            let client = Client::builder().build().unwrap();
+            // 开启并发
+            let handle = tokio::spawn(async move {
+                while Instant::now() < test_end {
+                    *total_requests_clone.lock().await += 1;
+                    let url = endpoint_clone.lock().await.url.clone();
+                    let method = Method::from_str(&endpoint_clone.lock().await.method.to_uppercase()).unwrap();
+                    let mut request = client.request(method, url);
+                    match request.send().await {
+                        Ok(response) => {
+                            if verbose {
+                                println!("{:?}", response.text().await.unwrap());
                             }
-                            Err(e) => {
-                                eprintln!("构建请求体失败:{:?}", e);
-                                panic!("{:?}", e);
-                            }
-                        };
+                        },
+                        Err(e) => if verbose {
+                            eprintln!("Error: {:?}", e);
+                        },
                     }
-                }).await.expect("xxx");
-            }
-        });
-        handles.push(handle);
+                }
+            });
+
+            handles.push(handle);
+        }
     }
     for handle in handles {
-        let _ = handle.await;
+        let _ = handle.await.unwrap();
     }
 
     Ok(TestResult {
@@ -133,4 +116,31 @@ pub async fn batch(
         timestamp: 0,
         assert_errors: Default::default(),
     })
+}
+
+
+/*
+    单测
+*/
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_batch() {
+        let mut endpoints: Vec<ApiEndpoint> = Vec::new();
+        endpoints.push(ApiEndpoint{
+            name: "test1".to_string(),
+            url: "https://ooooo.run/yAJSIg".to_string(),
+            method: "get".to_string(),
+            timeout_secs: 0,
+            weight: 1,
+            json: None,
+            headers: None,
+            cookies: None,
+            assert_options: None,
+        });
+        let _ = batch(10, 10, false, false, endpoints).await;
+    }
 }
