@@ -86,8 +86,11 @@ pub async fn batch(
         let api_min_response_time = Arc::new(Mutex::new(u64::MAX));
         // 接口统计错误数量
         let api_err_count = Arc::new(Mutex::new(0));
+        // 接口响应大小
+        let api_total_response_size = Arc::new(Mutex::new(0u64));
+        // 初始化api结果
         let mut api_result = Arc::new(Mutex::new(ApiResult{
-            name,
+            name: name.clone(),
             url,
             success_rate: 0.0,
             median_response_time: 0,
@@ -105,6 +108,8 @@ pub async fn batch(
         for _ in 0..concurrency_for_endpoint {
             // 数据桶副本
             let histogram_clone = histogram.clone();
+            // 任务名称
+            let api_name_clone = name.clone();
             // api数据桶副本
             let api_histogram_clone = api_histogram.clone();
             // api成功数量统计副本
@@ -119,6 +124,8 @@ pub async fn batch(
             let api_err_count_clone = api_err_count.clone();
             // api结果副本
             let api_result_clone = api_result.clone();
+            // api吞吐量副本
+            let api_total_response_size_clone = api_total_response_size.clone();
             // 总请求数记录副本
             let total_requests_clone = Arc::clone(&total_requests);
             // 每个接口端点副本
@@ -148,7 +155,10 @@ pub async fn batch(
             // 开启并发
             let handle: tokio::task::JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                 while Instant::now() < test_end {
+                    // 总请求数
                     *total_requests_clone.lock().await += 1;
+                    // api请求数
+                    *api_total_requests_clone.lock().await += 1;
                     // 请求方法副本
                     let method_clone = endpoint_clone.lock().await.method.clone();
                     // json副本
@@ -213,6 +223,11 @@ pub async fn batch(
                                 StatusCode::USE_PROXY |
                                 StatusCode::TEMPORARY_REDIRECT |
                                 StatusCode::PERMANENT_REDIRECT => {
+                                    /*
+                                    ---------------
+                                        请求成功
+                                    ---------------
+                                    */
                                     let mut api_histogram = api_histogram_clone.lock().await;
                                     // 响应时间
                                     let duration = start.elapsed().as_millis() as u64;
@@ -240,6 +255,8 @@ pub async fn batch(
                                     if let Some(content_length) = response.content_length() {
                                         let mut total_size = total_response_size_clone.lock().await;
                                         *total_size += content_length;
+                                        let mut api_total_size = api_total_response_size_clone.lock().await;
+                                        *api_total_size += content_length;
                                     }
                                     // 获取响应
                                     let body_bytes = match response.bytes().await {
@@ -302,14 +319,22 @@ pub async fn batch(
                                                                 increment(
                                                                     String::from(endpoint_clone.lock().await.url.clone()),
                                                                     format!(
-                                                                        "预期结果：{:?}, 实际结果：{:?}", assert_option.reference_object, result
+                                                                        "{:?}-预期结果：{:?}, 实际结果：{:?}",api_name_clone ,assert_option.reference_object, result
                                                                     )
                                                                 );
                                                             if verbose{
-                                                                eprintln!("预期结果：{:?}, 实际结果：{:?}", assert_option.reference_object, result)
+                                                                eprintln!("{:?}-预期结果：{:?}, 实际结果：{:?}",api_name_clone ,assert_option.reference_object, result)
                                                             }
+                                                            // 错误数据增加
+                                                            *err_count_clone.lock().await += 1;
+                                                            *api_err_count_clone.lock().await += 1;
                                                             // 退出断言
                                                             break;
+                                                        } else {
+                                                            // 正确统计+1
+                                                            *successful_requests_clone.lock().await += 1;
+                                                            // api正确统计+1
+                                                            *api_successful_requests_clone.lock().await += 1;
                                                         }
                                                     }
                                                 },
@@ -320,33 +345,54 @@ pub async fn batch(
                                             }
                                         }
 
+                                    } else{
+                                        // 正确统计+1
+                                        *successful_requests_clone.lock().await += 1;
+                                        // api正确统计+1
+                                        *api_successful_requests_clone.lock().await += 1;
                                     }
-                                    // 正确统计+1
-                                    *successful_requests_clone.lock().await += 1;
 
+
+                                    let api_total_data_bytes = *api_total_response_size_clone.lock().await;
+                                    let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
+                                    let api_total_requests = api_total_requests_clone.lock().await.clone();
+                                    let api_rps = api_total_requests as f64/ (Instant::now() - test_start).as_secs_f64();
+                                    let api_success_rate = *api_successful_requests_clone.lock().await as f64 / api_total_requests as f64 * 100.0;
+                                    let throughput_per_second_kb = api_total_data_kb / (Instant::now() - test_start).as_secs_f64();
+                                    // 给结果赋值
                                     let  mut api_res = api_result_clone.lock().await;
-
                                     api_res.response_time_95 = *api_histogram.percentile(95.0)?.range().start();
                                     api_res.response_time_99 = *api_histogram.percentile(99.0)?.range().start();
                                     api_res.median_response_time = *api_histogram.percentile(50.0)?.range().start();
                                     api_res.max_response_time = *api_max_rt;
                                     api_res.min_response_time = *api_min_rt;
+                                    api_res.total_requests = api_total_requests;
+                                    api_res.total_data_kb = api_total_data_kb;
+                                    api_res.rps = api_rps;
+                                    api_res.success_rate = api_success_rate;
+                                    api_res.err_count = *api_err_count_clone.lock().await;
+                                    api_res.throughput_per_second_kb = throughput_per_second_kb;
 
                                     println!("{:?}",api_res);
                                 }
                                 // 状态码错误
                                 _ =>{
                                     *err_count_clone.lock().await += 1;
+                                    *api_err_count_clone.lock().await += 1;
                                     let status_code = u16::from(response.status());
                                     let err_msg = format!("HTTP 错误: 状态码 {}", status_code);
                                     let url = response.url().to_string();
                                     http_errors_clone.lock().await.increment(status_code, err_msg, url);
+                                    if verbose{
+                                        println!("{:?}-HTTP 错误: 状态码 {:?}",api_name_clone, status_code)
+                                    }
                                 }
                             }
 
                         },
                         Err(e) => {
                             *err_count_clone.lock().await += 1;
+                            *api_err_count_clone.lock().await+=1;
                             let status_code: u16;
                             match e.status(){
                                 None => {
@@ -418,11 +464,12 @@ mod tests {
     #[tokio::test]
     async fn test_batch() {
         let mut assert_vec: Vec<AssertOption> = Vec::new();
-        let ref_obj = Value::from(20);
+        let ref_obj = Value::from(200);
         assert_vec.push(AssertOption{ jsonpath: "$.code".to_string(), reference_object: ref_obj });
         let mut endpoints: Vec<ApiEndpoint> = Vec::new();
+
         endpoints.push(ApiEndpoint{
-            name: "test1".to_string(),
+            name: "有断言".to_string(),
             url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
             method: "GET".to_string(),
             timeout_secs: 0,
@@ -432,8 +479,9 @@ mod tests {
             cookies: None,
             assert_options: Some(assert_vec.clone()),
         });
+
         endpoints.push(ApiEndpoint{
-            name: "test2".to_string(),
+            name: "无断言".to_string(),
             url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
             method: "GET".to_string(),
             timeout_secs: 0,
@@ -441,8 +489,9 @@ mod tests {
             json: None,
             headers: None,
             cookies: None,
-            assert_options: Some(assert_vec.clone()),
+            assert_options: None,
         });
-        let _ = batch(5, 1, false, false, endpoints).await;
+
+        let _ = batch(5, 100, false, false, endpoints).await;
     }
 }

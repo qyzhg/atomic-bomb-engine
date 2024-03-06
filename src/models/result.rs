@@ -51,7 +51,7 @@ pub struct ApiResult{
     pub median_response_time: u64,
     pub response_time_95: u64,
     pub response_time_99: u64,
-    pub total_requests: i32,
+    pub total_requests: u64,
     pub rps: f64,
     pub max_response_time: u64,
     pub min_response_time: u64,
