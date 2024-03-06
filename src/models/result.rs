@@ -58,3 +58,23 @@ pub struct ApiResult{
     pub total_data_kb: f64,
     pub throughput_per_second_kb: f64,
 }
+
+impl ApiResult {
+    pub fn new() -> Self {
+        Self {
+            name: String::new(),
+            url: String::new(),
+            success_rate: 0.0,
+            median_response_time: 0,
+            response_time_95: 0,
+            response_time_99: 0,
+            total_requests: 0,
+            rps: 0.0,
+            max_response_time: 0,
+            min_response_time: 0,
+            err_count: 0,
+            total_data_kb: 0.0,
+            throughput_per_second_kb: 0.0,
+        }
+    }
+}
