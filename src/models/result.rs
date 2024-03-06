@@ -1,7 +1,8 @@
 use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TestResult {
     pub total_duration: f64,
     pub success_rate: f64,
@@ -21,7 +22,7 @@ pub struct TestResult {
 }
 
 #[derive(Debug)]
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BatchResult {
     pub total_duration: f64,
     pub success_rate: f64,
@@ -42,7 +43,7 @@ pub struct BatchResult {
 }
 
 #[derive(Debug)]
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ApiResult{
     pub name: String,
     pub url: String,
