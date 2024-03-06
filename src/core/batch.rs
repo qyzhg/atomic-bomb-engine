@@ -16,7 +16,7 @@ use crate::core::sleep_guard::SleepGuard;
 use crate::core::status_share::{RESULT_QUEUE, SHOULD_STOP};
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
-use crate::models::result::TestResult;
+use crate::models::result::{ApiResult, TestResult};
 use crate::models::assert_option::AssertOption;
 use crate::models::api_endpoint::ApiEndpoint;
 pub async fn batch(
@@ -61,18 +61,64 @@ pub async fn batch(
     let test_end = test_start + Duration::from_secs(test_duration_secs);
     // 针对每一个接口开始配置
     for endpoint_arc in api_endpoints_arc.iter() {
+        let endpoint = endpoint_arc.lock().await;
+        let weight = endpoint.weight.clone();
+        let name = endpoint.name.clone();
+        let url = endpoint.url.clone();
+        drop(endpoint);
         // 计算权重比例
-        let weight_ratio = endpoint_arc.lock().await.weight as f64 / total_weight as f64;
+        let weight_ratio = weight as f64 / total_weight as f64;
         // 计算每个接口的并发量
         let mut concurrency_for_endpoint = ((concurrent_requests as f64) * weight_ratio).round() as usize;
         // 如果这个接口的并发量四舍五入成0了， 就把他定为1
         if concurrency_for_endpoint == 0{
             concurrency_for_endpoint = 1
         }
+        // 接口数据的统计
+        let api_histogram = Arc::new(Mutex::new(Histogram::new(14, 20).unwrap()));
+        // 接口成功数据统计
+        let api_successful_requests = Arc::new(Mutex::new(0));
+        // 接口请求总数统计
+        let api_total_requests = Arc::new(Mutex::new(0));
+        // 接口统计最大响应时间
+        let api_max_response_time = Arc::new(Mutex::new(0u64));
+        // 接口统计最小响应时间
+        let api_min_response_time = Arc::new(Mutex::new(u64::MAX));
+        // 接口统计错误数量
+        let api_err_count = Arc::new(Mutex::new(0));
+        let mut api_result = Arc::new(Mutex::new(ApiResult{
+            name,
+            url,
+            success_rate: 0.0,
+            median_response_time: 0,
+            response_time_95: 0,
+            response_time_99: 0,
+            total_requests: 0,
+            rps: 0.0,
+            max_response_time: 0,
+            min_response_time: 0,
+            err_count: 0,
+            total_data_kb: 0.0,
+            throughput_per_second_kb: 0.0,
+        }));
         // 根据权重算出来每个接口的并发量
         for _ in 0..concurrency_for_endpoint {
             // 数据桶副本
             let histogram_clone = histogram.clone();
+            // api数据桶副本
+            let api_histogram_clone = api_histogram.clone();
+            // api成功数量统计副本
+            let api_successful_requests_clone = api_successful_requests.clone();
+            // api总统计数量统计副本
+            let api_total_requests_clone = api_total_requests.clone();
+            // api最大响应时间副本
+            let api_max_response_time_clone = api_max_response_time.clone();
+            // api最小响应时间副本
+            let api_min_response_time_clone = api_min_response_time.clone();
+            // api错误数量统计副本
+            let api_err_count_clone = api_err_count.clone();
+            // api结果副本
+            let api_result_clone = api_result.clone();
             // 总请求数记录副本
             let total_requests_clone = Arc::clone(&total_requests);
             // 每个接口端点副本
@@ -103,8 +149,6 @@ pub async fn batch(
             let handle: tokio::task::JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                 while Instant::now() < test_end {
                     *total_requests_clone.lock().await += 1;
-                    // name副本
-                    let name_clone = endpoint_clone.lock().await.name.clone();
                     // 请求方法副本
                     let method_clone = endpoint_clone.lock().await.method.clone();
                     // json副本
@@ -169,18 +213,29 @@ pub async fn batch(
                                 StatusCode::USE_PROXY |
                                 StatusCode::TEMPORARY_REDIRECT |
                                 StatusCode::PERMANENT_REDIRECT => {
+                                    let mut api_histogram = api_histogram_clone.lock().await;
                                     // 响应时间
                                     let duration = start.elapsed().as_millis() as u64;
                                     // 最大请求时间
                                     let mut max_rt = max_response_time_clone.lock().await;
                                     *max_rt = (*max_rt).max(duration);
+                                    // api最大请求时间
+                                    let mut api_max_rt = api_max_response_time_clone.lock().await;
+                                    *api_max_rt = (*api_max_rt).max(duration);
                                     // 最小响应时间
                                     let mut min_rt = min_response_time_clone.lock().await;
                                     *min_rt = (*min_rt).min(duration);
-                                    // 将数据放入统计桶
+                                    // api最小响应时间
+                                    let mut api_min_rt = api_min_response_time_clone.lock().await;
+                                    *api_min_rt = (*api_min_rt).min(duration);
+                                    // 将数据放入全局统计桶
                                     if let Err(e) = histogram_clone.lock().await.increment(duration){
                                         eprintln!("histogram设置数据错误:{:?}", e)
                                     };
+                                    // 将数据放入api统计桶
+                                    if let Err(e) = api_histogram.increment(duration){
+                                        eprintln!("api histogram设置错误:{:?}", e)
+                                    }
                                     // 吞吐量统计
                                     if let Some(content_length) = response.content_length() {
                                         let mut total_size = total_response_size_clone.lock().await;
@@ -268,6 +323,16 @@ pub async fn batch(
                                     }
                                     // 正确统计+1
                                     *successful_requests_clone.lock().await += 1;
+
+                                    let  mut api_res = api_result_clone.lock().await;
+
+                                    api_res.response_time_95 = *api_histogram.percentile(95.0)?.range().start();
+                                    api_res.response_time_99 = *api_histogram.percentile(99.0)?.range().start();
+                                    api_res.median_response_time = *api_histogram.percentile(50.0)?.range().start();
+                                    api_res.max_response_time = *api_max_rt;
+                                    api_res.min_response_time = *api_min_rt;
+
+                                    println!("{:?}",api_res);
                                 }
                                 // 状态码错误
                                 _ =>{
@@ -368,16 +433,16 @@ mod tests {
             assert_options: Some(assert_vec.clone()),
         });
         endpoints.push(ApiEndpoint{
-            name: "test1".to_string(),
+            name: "test2".to_string(),
             url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
             method: "GET".to_string(),
             timeout_secs: 0,
-            weight: 1,
+            weight: 3,
             json: None,
             headers: None,
             cookies: None,
             assert_options: Some(assert_vec.clone()),
         });
-        let _ = batch(10, 1, false, false, endpoints).await;
+        let _ = batch(5, 1, false, false, endpoints).await;
     }
 }
