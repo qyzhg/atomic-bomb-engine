@@ -39,7 +39,7 @@ pub struct BatchResult {
     pub http_errors: HashMap<(u16, String, String), u32>,
     pub timestamp: u128,
     pub assert_errors: HashMap<(String, String), u32>,
-    pub api_results: HashMap<String, ApiResult>
+    pub api_results: Vec<ApiResult>
 }
 
 #[derive(Debug)]

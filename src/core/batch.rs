@@ -11,12 +11,13 @@ use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName};
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 use jsonpath_lib::select;
+use crate::core::check_endpoints_names::check_endpoints_names;
 
 use crate::core::sleep_guard::SleepGuard;
 use crate::core::status_share::{RESULT_QUEUE, SHOULD_STOP};
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
-use crate::models::result::{ApiResult, TestResult};
+use crate::models::result::{ApiResult, BatchResult, TestResult};
 use crate::models::assert_option::AssertOption;
 use crate::models::api_endpoint::ApiEndpoint;
 pub async fn batch(
@@ -25,9 +26,12 @@ pub async fn batch(
     verbose: bool,
     should_prevent: bool,
     api_endpoints: Vec<ApiEndpoint>
-) -> anyhow::Result<TestResult> {
+) -> anyhow::Result<BatchResult> {
     // 阻止电脑休眠
     let _guard = SleepGuard::new(should_prevent);
+    if let Err(e) = check_endpoints_names(api_endpoints.clone()){
+        return Err(Error::msg(e));
+    }
     // 总响应时间统计
     let histogram = Arc::new(Mutex::new(Histogram::new(14, 20).unwrap()));
     // 成功数据统计
@@ -433,7 +437,7 @@ pub async fn batch(
         }
     }
 
-    Ok(TestResult {
+    Ok(BatchResult{
         total_duration: 0.0,
         success_rate: 0.0,
         median_response_time: 0,
@@ -449,6 +453,7 @@ pub async fn batch(
         http_errors: Default::default(),
         timestamp: 0,
         assert_errors: Default::default(),
+        api_results: vec![],
     })
 }
 
@@ -492,6 +497,13 @@ mod tests {
             assert_options: None,
         });
 
-        let _ = batch(5, 100, false, false, endpoints).await;
+        match batch(5, 100, false, false, endpoints).await {
+            Ok(r) => {
+                println!("{:?}", r)
+            }
+            Err(e) => {
+                eprintln!("{:?}", e)
+            }
+        };
     }
 }
