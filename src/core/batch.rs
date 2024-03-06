@@ -75,21 +75,7 @@ pub async fn batch(
         let name = endpoint.name.clone();
         let url = endpoint.url.clone();
         drop(endpoint);
-        results_arc.lock().await.push(ApiResult{
-            name: "".to_string(),
-            url: "".to_string(),
-            success_rate: 0.0,
-            median_response_time: 0,
-            response_time_95: 0,
-            response_time_99: 0,
-            total_requests: 0,
-            rps: 0.0,
-            max_response_time: 0,
-            min_response_time: 0,
-            err_count: 0,
-            total_data_kb: 0.0,
-            throughput_per_second_kb: 0.0,
-        });
+        results_arc.lock().await.push(ApiResult::new());
         // 计算权重比例
         let weight_ratio = weight as f64 / total_weight as f64;
         // 计算每个接口的并发量
@@ -113,21 +99,10 @@ pub async fn batch(
         // 接口响应大小
         let api_total_response_size = Arc::new(Mutex::new(0u64));
         // 初始化api结果
-        let api_result = Arc::new(Mutex::new(ApiResult{
-            name: name.clone(),
-            url,
-            success_rate: 0.0,
-            median_response_time: 0,
-            response_time_95: 0,
-            response_time_99: 0,
-            total_requests: 0,
-            rps: 0.0,
-            max_response_time: 0,
-            min_response_time: 0,
-            err_count: 0,
-            total_data_kb: 0.0,
-            throughput_per_second_kb: 0.0,
-        }));
+        let mut r = ApiResult::new();
+        r.name = name.clone();
+        r.url = url.clone();
+        let api_result = Arc::new(Mutex::new(r));
         // 根据权重算出来每个接口的并发量
         for _ in 0..concurrency_for_endpoint {
             // 数据桶副本
