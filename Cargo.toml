@@ -1,6 +1,6 @@
 [package]
 name = "atomic-bomb-engine"
-version = "0.2.14"
+version = "0.3.0"
 edition = "2021"
 description = "A high performance torture testing engine"
 license = "MIT"
@@ -21,6 +21,7 @@ lazy_static = "1.4.0"
 parking_lot = "0.12.1"
 winapi = { version = "0.3", features = ["winbase", "winnt"], optional = true }
 jsonpath_lib = "0.3.0"
+time = "0.3.34"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["winbase"] }
