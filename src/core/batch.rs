@@ -1,24 +1,26 @@
-use std::fmt::format;
 use std::str::FromStr;
 use std::sync::{Arc};
 use histogram::Histogram;
-use std::time::{self,Duration, Instant};
-use tokio::time::interval;
+use std::time::{Duration, Instant};
 use anyhow::{Context, Error};
-use reqwest::{Client, Method, Response, StatusCode};
-use tokio::sync::{Mutex, Semaphore};
+use reqwest::{Client, Method, StatusCode};
+use tokio::sync::{Mutex};
 use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName};
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 use jsonpath_lib::select;
-use crate::core::check_endpoints_names::check_endpoints_names;
+use tokio::time::interval;
 
+use crate::core::check_endpoints_names::check_endpoints_names;
 use crate::core::sleep_guard::SleepGuard;
+use crate::core::status_share::{RESULTS_QUEUE, RESULTS_SHOULD_STOP};
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::{ApiResult, BatchResult};
 use crate::models::assert_option::AssertOption;
 use crate::models::api_endpoint::ApiEndpoint;
+
+
 pub async fn batch(
     test_duration_secs: u64,
     concurrent_requests: usize,
@@ -64,8 +66,8 @@ pub async fn batch(
     // 测试结束时间
     let test_end = test_start + Duration::from_secs(test_duration_secs);
     // 每个接口的测试结果
-    let mut results: Vec<ApiResult> = Vec::new();
-    let mut results_arc = Arc::new(Mutex::new(results));
+    let results: Vec<ApiResult> = Vec::new();
+    let results_arc = Arc::new(Mutex::new(results));
     // 针对每一个接口开始配置
     for (index, endpoint_arc) in api_endpoints_arc.iter().enumerate() {
         let endpoint = endpoint_arc.lock().await;
@@ -111,7 +113,7 @@ pub async fn batch(
         // 接口响应大小
         let api_total_response_size = Arc::new(Mutex::new(0u64));
         // 初始化api结果
-        let mut api_result = Arc::new(Mutex::new(ApiResult{
+        let api_result = Arc::new(Mutex::new(ApiResult{
             name: name.clone(),
             url,
             success_rate: 0.0,
@@ -442,6 +444,85 @@ pub async fn batch(
             handles.push(handle);
         }
     }
+
+    // 共享任务状态
+    {
+        let total_requests_clone = Arc::clone(&total_requests);
+        let successful_requests_clone = Arc::clone(&successful_requests);
+        let histogram_clone = Arc::clone(&histogram);
+        let total_response_size_clone = Arc::clone(&total_response_size);
+        let http_errors_clone = Arc::clone(&http_errors);
+        let err_count_clone = Arc::clone(&err_count);
+        let max_resp_time_clone = Arc::clone(&max_response_time);
+        let min_resp_time_clone = Arc::clone(&min_response_time);
+        let assert_error_clone = Arc::clone(&assert_errors);
+        let api_results_clone = Arc::clone(&results_arc);
+
+        tokio::spawn(async move {
+            let mut interval = interval(Duration::from_secs(1));
+            let should_stop = *RESULTS_SHOULD_STOP.lock();
+            while !should_stop {
+                interval.tick().await;
+
+                let err_count = *err_count_clone.lock().await;
+                let max_response_time_c = *max_resp_time_clone.lock().await;
+                let min_response_time_c = *min_resp_time_clone.lock().await;
+                let total_duration = (Instant::now() - test_start).as_secs_f64();
+                let total_requests = *total_requests_clone.lock().await as f64;
+                let successful_requests = *successful_requests_clone.lock().await as f64;
+                let success_rate = (total_requests - err_count as f64) / total_requests * 100.0;
+                let histogram = histogram_clone.lock().await;
+                let total_response_size_kb = *total_response_size_clone.lock().await as f64 / 1024.0;
+                let throughput_kb_s = total_response_size_kb / total_duration;
+                let http_errors = http_errors_clone.lock().await.errors.clone();
+                let assert_errors = assert_error_clone.lock().await.errors.clone();
+                let rps = successful_requests / total_duration;
+                let resp_median_line = match  histogram.percentile(50.0){
+                    Ok(bucket) => *bucket.range().start(),
+                    Err(_) =>0
+                };
+                let resp_95_line = match  histogram.percentile(95.0){
+                    Ok(bucket) => *bucket.range().start(),
+                    Err(_) =>0
+                };
+                let resp_99_line = match  histogram.percentile(99.0){
+                    Ok(bucket) => *bucket.range().start(),
+                    Err(_) =>0
+                };
+                let timestamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
+                    Ok(n) => n.as_millis(),
+                    Err(_) => 0,
+                };
+                let api_results = api_results_clone.lock().await;
+
+                let mut queue = RESULTS_QUEUE.lock();
+                // 如果队列中有了一个数据了，就移除旧数据
+                if queue.len() == 1 {
+                    queue.pop_front();
+                }
+                // 添加新结果
+                queue.push_back(BatchResult{
+                    total_duration,
+                    success_rate,
+                    median_response_time: resp_median_line,
+                    response_time_95: resp_95_line,
+                    response_time_99: resp_99_line,
+                    total_requests: total_requests as u64,
+                    rps,
+                    max_response_time: max_response_time_c,
+                    min_response_time:min_response_time_c,
+                    err_count,
+                    total_data_kb:total_response_size_kb,
+                    throughput_per_second_kb: throughput_kb_s,
+                    http_errors: http_errors.lock().unwrap().clone(),
+                    timestamp,
+                    assert_errors: assert_errors.lock().unwrap().clone(),
+                    api_results: api_results.to_vec().clone(),
+                });
+            }
+        });
+    }
+
     for handle in handles {
         match handle.await {
             Ok(result) => {
@@ -462,6 +543,7 @@ pub async fn batch(
         }
     }
 
+    // 对结果进行赋值
     let total_duration = (Instant::now() - test_start).as_secs_f64();
     let total_requests = *total_requests.lock().await as u64;
     let successful_requests = *successful_requests.lock().await as f64;
@@ -477,6 +559,7 @@ pub async fn batch(
         Err(_) => 0,
     };
     let api_results = results_arc.lock().await;
+
     let result = Ok(BatchResult{
         total_duration,
         success_rate,
@@ -495,6 +578,9 @@ pub async fn batch(
         assert_errors: assert_errors.lock().unwrap().clone(),
         api_results:api_results.to_vec().clone(),
     });
+    let mut should_stop = RESULTS_SHOULD_STOP.lock();
+    *should_stop = true;
+    eprintln!("测试完成！");
     result
 }
 
@@ -540,7 +626,7 @@ mod tests {
 
         match batch(5, 100, false, false, endpoints).await {
             Ok(r) => {
-                println!("{:?}", r)
+                println!("{:#?}", r)
             }
             Err(e) => {
                 eprintln!("{:?}", e)
