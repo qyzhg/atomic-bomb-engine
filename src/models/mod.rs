@@ -2,4 +2,4 @@ pub mod result;
 pub mod http_error_stats;
 pub mod assert_option;
 pub mod assert_error_stats;
-pub(crate) mod api_endpoint;
+pub mod api_endpoint;
