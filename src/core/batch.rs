@@ -14,10 +14,9 @@ use jsonpath_lib::select;
 use crate::core::check_endpoints_names::check_endpoints_names;
 
 use crate::core::sleep_guard::SleepGuard;
-use crate::core::status_share::{RESULT_QUEUE, SHOULD_STOP};
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
-use crate::models::result::{ApiResult, BatchResult, TestResult};
+use crate::models::result::{ApiResult, BatchResult};
 use crate::models::assert_option::AssertOption;
 use crate::models::api_endpoint::ApiEndpoint;
 pub async fn batch(
@@ -29,6 +28,7 @@ pub async fn batch(
 ) -> anyhow::Result<BatchResult> {
     // 阻止电脑休眠
     let _guard = SleepGuard::new(should_prevent);
+    // 检查每个接口的名称
     if let Err(e) = check_endpoints_names(api_endpoints.clone()){
         return Err(Error::msg(e));
     }
@@ -63,13 +63,31 @@ pub async fn batch(
     let test_start = Instant::now();
     // 测试结束时间
     let test_end = test_start + Duration::from_secs(test_duration_secs);
+    // 每个接口的测试结果
+    let mut results: Vec<ApiResult> = Vec::new();
+    let mut results_arc = Arc::new(Mutex::new(results));
     // 针对每一个接口开始配置
-    for endpoint_arc in api_endpoints_arc.iter() {
+    for (index, endpoint_arc) in api_endpoints_arc.iter().enumerate() {
         let endpoint = endpoint_arc.lock().await;
         let weight = endpoint.weight.clone();
         let name = endpoint.name.clone();
         let url = endpoint.url.clone();
         drop(endpoint);
+        results_arc.lock().await.push(ApiResult{
+            name: "".to_string(),
+            url: "".to_string(),
+            success_rate: 0.0,
+            median_response_time: 0,
+            response_time_95: 0,
+            response_time_99: 0,
+            total_requests: 0,
+            rps: 0.0,
+            max_response_time: 0,
+            min_response_time: 0,
+            err_count: 0,
+            total_data_kb: 0.0,
+            throughput_per_second_kb: 0.0,
+        });
         // 计算权重比例
         let weight_ratio = weight as f64 / total_weight as f64;
         // 计算每个接口的并发量
@@ -148,6 +166,8 @@ pub async fn batch(
             let successful_requests_clone = successful_requests.clone();
             // http错误副本
             let http_errors_clone = http_errors.clone();
+            // results副本
+            let results_clone = results_arc.clone();
             // 构建http客户端
             let client_builder = Client::builder();
             // 如果有超时时间就将client设置
@@ -376,8 +396,13 @@ pub async fn batch(
                                     api_res.success_rate = api_success_rate;
                                     api_res.err_count = *api_err_count_clone.lock().await;
                                     api_res.throughput_per_second_kb = throughput_per_second_kb;
-
-                                    println!("{:?}",api_res);
+                                    // 向最终结果中添加数据
+                                    let mut res = results_clone.lock().await;
+                                    if index < res.len() {
+                                        res[index] = api_res.clone();
+                                    } else {
+                                        eprintln!("results索引越界");
+                                    }
                                 }
                                 // 状态码错误
                                 _ =>{
@@ -437,24 +462,40 @@ pub async fn batch(
         }
     }
 
-    Ok(BatchResult{
-        total_duration: 0.0,
-        success_rate: 0.0,
-        median_response_time: 0,
-        response_time_95: 0,
-        response_time_99: 0,
-        total_requests: 0,
-        rps: 0.0,
-        max_response_time: 0,
-        min_response_time: 0,
-        err_count: 0,
-        total_data_kb: 0.0,
-        throughput_per_second_kb: 0.0,
-        http_errors: Default::default(),
-        timestamp: 0,
-        assert_errors: Default::default(),
-        api_results: vec![],
-    })
+    let total_duration = (Instant::now() - test_start).as_secs_f64();
+    let total_requests = *total_requests.lock().await as u64;
+    let successful_requests = *successful_requests.lock().await as f64;
+    let success_rate = successful_requests / total_requests as f64 * 100.0;
+    let histogram = histogram.lock().await;
+    let total_response_size_kb = *total_response_size.lock().await as f64 / 1024.0;
+    let throughput_kb_s = total_response_size_kb / test_duration_secs as f64;
+    let http_errors = http_errors.lock().await.errors.clone();
+    let assert_errors = assert_errors.lock().await.errors.clone();
+    let err_count_clone = Arc::clone(&err_count);
+    let timestamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(n) => n.as_millis(),
+        Err(_) => 0,
+    };
+    let api_results = results_arc.lock().await;
+    let result = Ok(BatchResult{
+        total_duration,
+        success_rate,
+        median_response_time: *histogram.percentile(50.0)?.range().start(),
+        response_time_95: *histogram.percentile(95.0)?.range().start(),
+        response_time_99: *histogram.percentile(99.0)?.range().start(),
+        total_requests,
+        rps: successful_requests / test_duration_secs as f64,
+        max_response_time: *max_response_time.lock().await,
+        min_response_time: *min_response_time.lock().await,
+        err_count:*err_count_clone.lock().await,
+        total_data_kb:total_response_size_kb,
+        throughput_per_second_kb: throughput_kb_s,
+        http_errors: http_errors.lock().unwrap().clone(),
+        timestamp,
+        assert_errors: assert_errors.lock().unwrap().clone(),
+        api_results:api_results.to_vec().clone(),
+    });
+    result
 }
 
 
