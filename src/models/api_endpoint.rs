@@ -1,9 +1,10 @@
 use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use crate::models::assert_option::AssertOption;
 
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ApiEndpoint {
     pub name: String,
     pub url: String,
