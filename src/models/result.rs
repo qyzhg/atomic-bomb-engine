@@ -26,6 +26,7 @@ pub struct TestResult {
 pub struct BatchResult {
     pub total_duration: f64,
     pub success_rate: f64,
+    pub error_rate: f64,
     pub median_response_time: u64,
     pub response_time_95: u64,
     pub response_time_99: u64,
@@ -48,6 +49,7 @@ pub struct ApiResult{
     pub name: String,
     pub url: String,
     pub success_rate: f64,
+    pub error_rate: f64,
     pub median_response_time: u64,
     pub response_time_95: u64,
     pub response_time_99: u64,
@@ -66,6 +68,7 @@ impl ApiResult {
             name: String::new(),
             url: String::new(),
             success_rate: 0.0,
+            error_rate: 0.0,
             median_response_time: 0,
             response_time_95: 0,
             response_time_99: 0,

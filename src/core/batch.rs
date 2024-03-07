@@ -446,6 +446,7 @@ pub async fn batch(
                 let total_requests = *total_requests_clone.lock().await as f64;
                 let successful_requests = *successful_requests_clone.lock().await as f64;
                 let success_rate = successful_requests / total_requests * 100.0;
+                let error_rate = err_count as f64 / total_requests * 100.0;
                 let histogram = histogram_clone.lock().await;
                 let total_response_size_kb = *total_response_size_clone.lock().await as f64 / 1024.0;
                 let throughput_kb_s = total_response_size_kb / total_duration;
@@ -479,6 +480,7 @@ pub async fn batch(
                 queue.push_back(BatchResult{
                     total_duration,
                     success_rate,
+                    error_rate,
                     median_response_time: resp_median_line,
                     response_time_95: resp_95_line,
                     response_time_99: resp_99_line,
@@ -519,6 +521,8 @@ pub async fn batch(
     }
 
     // 对结果进行赋值
+    let err_count_clone = Arc::clone(&err_count);
+    let err_count = *err_count_clone.lock().await;
     let total_duration = (Instant::now() - test_start).as_secs_f64();
     let total_requests = *total_requests.lock().await as u64;
     let successful_requests = *successful_requests.lock().await as f64;
@@ -528,16 +532,18 @@ pub async fn batch(
     let throughput_kb_s = total_response_size_kb / test_duration_secs as f64;
     let http_errors = http_errors.lock().await.errors.clone();
     let assert_errors = assert_errors.lock().await.errors.clone();
-    let err_count_clone = Arc::clone(&err_count);
     let timestamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(n) => n.as_millis(),
         Err(_) => 0,
     };
     let api_results = results_arc.lock().await;
+    let error_rate = err_count as f64 / total_requests as f64 * 100.0;
+
 
     let result = Ok(BatchResult{
         total_duration,
         success_rate,
+        error_rate,
         median_response_time: *histogram.percentile(50.0)?.range().start(),
         response_time_95: *histogram.percentile(95.0)?.range().start(),
         response_time_99: *histogram.percentile(99.0)?.range().start(),
