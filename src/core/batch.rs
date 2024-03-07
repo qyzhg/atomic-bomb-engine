@@ -445,7 +445,7 @@ pub async fn batch(
                 let total_duration = (Instant::now() - test_start).as_secs_f64();
                 let total_requests = *total_requests_clone.lock().await as f64;
                 let successful_requests = *successful_requests_clone.lock().await as f64;
-                let success_rate = (total_requests - err_count as f64) / total_requests * 100.0;
+                let success_rate = successful_requests / total_requests * 100.0;
                 let histogram = histogram_clone.lock().await;
                 let total_response_size_kb = *total_response_size_clone.lock().await as f64 / 1024.0;
                 let throughput_kb_s = total_response_size_kb / total_duration;
