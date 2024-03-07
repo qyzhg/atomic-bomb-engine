@@ -372,6 +372,7 @@ pub async fn batch(
                                     api_res.err_count = *api_err_count_clone.lock().await;
                                     api_res.throughput_per_second_kb = throughput_per_second_kb;
                                     api_res.error_rate = api_res.err_count as f64 / api_res.total_requests as f64 * 100.0;
+                                    api_res.method = method_clone.clone().to_uppercase();
                                     // 向最终结果中添加数据
                                     let mut res = results_clone.lock().await;
                                     if index < res.len() {
@@ -469,7 +470,7 @@ pub async fn batch(
                     Err(_) => 0,
                 };
                 let api_results = api_results_clone.lock().await;
-
+                // println!("{:?}", api_results);
                 let mut queue = RESULTS_QUEUE.lock();
                 // 如果队列中有了一个数据了，就移除旧数据
                 if queue.len() == 1 {
