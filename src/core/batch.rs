@@ -311,8 +311,6 @@ pub async fn batch(
                                                     // 取出匹配到的唯一值
                                                     if let Some(result) = results.get(0).map(|&v|v) {
                                                         if *result != assert_option.reference_object{
-                                                            // 断言失败， 失败次数+1
-                                                            *err_count_clone.lock().await += 1;
                                                             // 将失败情况加入到一个容器中
                                                             assert_errors_clone.
                                                                 lock().
