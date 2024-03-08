@@ -293,7 +293,15 @@ pub async fn batch(
                                         // 将响应体解析成字节码
                                         let body_bytes = match body_bytes{
                                             None => {
-                                                eprintln!("响应body为空，无法使用jsonpath获取到数据");
+                                                if verbose{
+                                                    eprintln!("响应body为空，无法使用jsonpath获取到数据");
+                                                };
+
+                                                *err_count_clone.lock().await += 1;
+                                                *api_err_count_clone.lock().await += 1;
+                                                assert_errors_clone.lock().await.increment(
+                                                    String::from(endpoint_clone.lock().await.url.clone()),
+                                                    format!("{:?}-JSONPath查询失败:{:?}",api_name_clone ,"响应body为空，无法使用jsonpath获取到数据"));
                                                 continue
                                             }
                                             Some(bytes) =>{
@@ -304,8 +312,15 @@ pub async fn batch(
                                         for assert_option in assert_options {
                                             let json_value: Value = match serde_json::from_slice(&*body_bytes) {
                                                 Err(e) =>{
-                                                    eprintln!("JSONPath 查询失败: {}", e);
-                                                    break;
+                                                    if verbose{
+                                                        eprintln!("JSONPath 查询失败: {}", e);
+                                                    };
+                                                    *err_count_clone.lock().await += 1;
+                                                    *api_err_count_clone.lock().await += 1;
+                                                    assert_errors_clone.lock().await.increment(
+                                                            String::from(endpoint_clone.lock().await.url.clone()),
+                                                            format!("{:?}-JSONPath查询失败:{:?}",api_name_clone ,e));
+                                                    continue;
                                                 }
                                                 Ok(val) => {
                                                     val
@@ -315,12 +330,26 @@ pub async fn batch(
                                             match select(&json_value, &*assert_option.jsonpath) {
                                                 Ok(results) => {
                                                     if results.is_empty(){
-                                                        eprintln!("没有匹配到任何结果");
-                                                        break;
+                                                        if verbose{
+                                                            eprintln!("没有匹配到任何结果");
+                                                        }
+                                                        *err_count_clone.lock().await += 1;
+                                                        *api_err_count_clone.lock().await += 1;
+                                                        assert_errors_clone.lock().await.increment(
+                                                            String::from(endpoint_clone.lock().await.url.clone()),
+                                                            format!("{:?}-JSONPath查询失败:{:?}",api_name_clone ,"没有匹配到任何结果"));
+                                                        continue;
                                                     }
                                                     if results.len() >1{
-                                                        eprintln!("匹配到多个值，无法进行断言");
-                                                        break;
+                                                        if verbose{
+                                                            eprintln!("匹配到多个值，无法进行断言");
+                                                        }
+                                                        *err_count_clone.lock().await += 1;
+                                                        *api_err_count_clone.lock().await += 1;
+                                                        assert_errors_clone.lock().await.increment(
+                                                            String::from(endpoint_clone.lock().await.url.clone()),
+                                                            format!("{:?}-JSONPath查询失败:{:?}",api_name_clone ,"匹配到多个值，无法进行断言"));
+                                                        continue;
                                                     }
                                                     // 取出匹配到的唯一值
                                                     if let Some(result) = results.get(0).map(|&v|v) {
@@ -592,7 +621,7 @@ mod tests {
     async fn test_batch() {
         let mut assert_vec: Vec<AssertOption> = Vec::new();
         let ref_obj = Value::from(200);
-        assert_vec.push(AssertOption{ jsonpath: "$.code".to_string(), reference_object: ref_obj });
+        assert_vec.push(AssertOption{ jsonpath: "$.codexxx".to_string(), reference_object: ref_obj });
         let mut endpoints: Vec<ApiEndpoint> = Vec::new();
 
         endpoints.push(ApiEndpoint{
