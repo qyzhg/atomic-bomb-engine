@@ -5,11 +5,12 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Error};
 use reqwest::{Client, Method, StatusCode};
 use tokio::sync::{Mutex};
-use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName};
+use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName, USER_AGENT};
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 use jsonpath_lib::select;
 use tokio::time::interval;
+use std::env;
 
 use crate::core::check_endpoints_names::check_endpoints_names;
 use crate::core::sleep_guard::SleepGuard;
@@ -68,6 +69,16 @@ pub async fn batch(
     // 每个接口的测试结果
     let results: Vec<ApiResult> = Vec::new();
     let results_arc = Arc::new(Mutex::new(results));
+    // user_agent
+    let info = os_info::get();
+    let os_type = info.os_type();
+    let os_version = info.version().to_string();
+    let app_name = env!("CARGO_PKG_NAME");
+    let app_version = env!("CARGO_PKG_VERSION");
+    let user_agent_value = format!(
+        "{} {} ({}; {})",
+        app_name, app_version, os_type, os_version
+    );
     // 针对每一个接口开始配置
     for (index, endpoint_arc) in api_endpoints_arc.iter().enumerate() {
         let endpoint = endpoint_arc.lock().await;
@@ -145,6 +156,8 @@ pub async fn batch(
             let http_errors_clone = http_errors.clone();
             // results副本
             let results_clone = results_arc.clone();
+            // user-agent副本
+            let user_agent_clone = user_agent_value.clone();
             // 构建http客户端
             let client_builder = Client::builder();
             // 如果有超时时间就将client设置
@@ -176,6 +189,7 @@ pub async fn batch(
                     let mut request = client.request(method, endpoint_clone.lock().await.url.clone());
                     // 构建请求头
                     let mut headers = HeaderMap::new();
+                    headers.insert(USER_AGENT, user_agent_clone.parse()?);
                     if let Some(headers_map) = headers_clone {
                         headers.extend(headers_map.iter().map(|(k, v)| {
                             let header_name = k.parse::<HeaderName>().expect("无效的header名称");
