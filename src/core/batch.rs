@@ -208,6 +208,7 @@ pub async fn batch(
                             }
                         }
                     }
+                    request = request.headers(headers);
                     // 构建json请求
                     if let Some(json_value) = json_obj_clone{
                         request = request.json(&json_value);
@@ -615,37 +616,52 @@ pub async fn batch(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use super::*;
 
     #[tokio::test]
     async fn test_batch() {
         let mut assert_vec: Vec<AssertOption> = Vec::new();
         let ref_obj = Value::from(200);
-        assert_vec.push(AssertOption{ jsonpath: "$.codexxx".to_string(), reference_object: ref_obj });
+        assert_vec.push(AssertOption{ jsonpath: "$.code".to_string(), reference_object: ref_obj });
         let mut endpoints: Vec<ApiEndpoint> = Vec::new();
 
+        // endpoints.push(ApiEndpoint{
+        //     name: "有断言".to_string(),
+        //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+        //     method: "GET".to_string(),
+        //     timeout_secs: 0,
+        //     weight: 1,
+        //     json: None,
+        //     headers: None,
+        //     cookies: None,
+        //     assert_options: Some(assert_vec.clone()),
+        // });
+        //
+        // endpoints.push(ApiEndpoint{
+        //     name: "无断言".to_string(),
+        //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+        //     method: "GET".to_string(),
+        //     timeout_secs: 0,
+        //     weight: 3,
+        //     json: None,
+        //     headers: None,
+        //     cookies: None,
+        //     assert_options: None,
+        // });
+
+        let mut h: HashMap<String, String> = HashMap::new();
+        h.insert("Authorization".to_string(), "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3MTA1MDg5MjUsInVzZXJFbWFpbCI6InF5emhnQDE2My5jb20iLCJ1c2VySXNBZG1pbiI6dHJ1ZSwidXNlck5hbWUiOiJxeXpoZyJ9.neHDiocB7T0XdZ1zqN2xYURDwrh2HpXUBQU09CP3EO8".to_string());
         endpoints.push(ApiEndpoint{
-            name: "有断言".to_string(),
-            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-            method: "GET".to_string(),
-            timeout_secs: 0,
+            name: "请求头".to_string(),
+            url: "https://ooooo.run/api/short/v1/list".to_string(),
+            method: "get".to_string(),
+            timeout_secs: 10,
             weight: 1,
             json: None,
-            headers: None,
+            headers: Some(h),
             cookies: None,
             assert_options: Some(assert_vec.clone()),
-        });
-
-        endpoints.push(ApiEndpoint{
-            name: "无断言".to_string(),
-            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-            method: "GET".to_string(),
-            timeout_secs: 0,
-            weight: 3,
-            json: None,
-            headers: None,
-            cookies: None,
-            assert_options: None,
         });
 
         match batch(5, 100, false, false, endpoints).await {
