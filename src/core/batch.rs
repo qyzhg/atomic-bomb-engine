@@ -280,8 +280,13 @@ pub async fn batch(
                                             Some(bytes)
                                         },
                                         Err(e) => {
-                                            eprintln!("读取响应失败:{:?}", e.to_string());
-                                            None
+                                            if verbose{
+                                                eprintln!("读取响应失败:{:?}", e.to_string());
+                                            }
+                                            *err_count_clone.lock().await += 1;
+                                            *api_err_count_clone.lock().await += 1;
+                                            http_errors_clone.lock().await.increment(0, e.to_string(), endpoint_clone.lock().await.url.clone());
+                                            continue
                                         }
                                     };
                                     if verbose {
