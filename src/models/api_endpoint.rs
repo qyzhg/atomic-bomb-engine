@@ -12,6 +12,7 @@ pub struct ApiEndpoint {
     pub timeout_secs: u64,
     pub weight: u32,
     pub json: Option<Value>,
+    pub form_data: Option<HashMap<String, String>>,
     pub headers: Option<HashMap<String, String>>,
     pub cookies: Option<String>,
     pub assert_options: Option<Vec<AssertOption>>,

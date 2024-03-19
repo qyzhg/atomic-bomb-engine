@@ -18,7 +18,6 @@ use crate::core::status_share::{RESULTS_QUEUE, RESULTS_SHOULD_STOP};
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::{ApiResult, BatchResult};
-use crate::models::assert_option::AssertOption;
 use crate::models::api_endpoint::ApiEndpoint;
 
 
@@ -177,6 +176,8 @@ pub async fn batch(
                     let method_clone = endpoint_clone.lock().await.method.clone();
                     // json副本
                     let json_obj_clone = endpoint_clone.lock().await.json.clone();
+                    // form副本
+                    let form_data_clone = endpoint_clone.lock().await.form_data.clone();
                     // headers副本
                     let headers_clone = endpoint_clone.lock().await.headers.clone();
                     // cookie副本
@@ -213,6 +214,10 @@ pub async fn batch(
                     if let Some(json_value) = json_obj_clone{
                         request = request.json(&json_value);
                     }
+                    // 构建form表单
+                    if let Some(form_data) = form_data_clone{
+                        request = request.form(&form_data);
+                    };
                     // 记录开始时间
                     let start = Instant::now();
                     // 发送请求
@@ -623,6 +628,8 @@ pub async fn batch(
 mod tests {
     use std::collections::HashMap;
     use super::*;
+    use crate::models::assert_option::AssertOption;
+
 
     #[tokio::test]
     async fn test_batch() {
@@ -666,6 +673,7 @@ mod tests {
             json: None,
             headers: Some(h),
             cookies: None,
+            form_data:None,
             assert_options: Some(assert_vec.clone()),
         });
 
