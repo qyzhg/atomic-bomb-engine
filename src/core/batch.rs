@@ -383,11 +383,6 @@ pub async fn batch(
                                                             *api_err_count_clone.lock().await += 1;
                                                             // 退出断言
                                                             break;
-                                                        } else {
-                                                            // 正确统计+1
-                                                            *successful_requests_clone.lock().await += 1;
-                                                            // api正确统计+1
-                                                            *api_successful_requests_clone.lock().await += 1;
                                                         }
                                                     }
                                                 },
@@ -531,8 +526,7 @@ pub async fn batch(
                 if queue.len() == 1 {
                     queue.pop_front();
                 }
-                // 添加新结果
-                queue.push_back(BatchResult{
+                let result = BatchResult{
                     total_duration,
                     success_rate,
                     error_rate,
@@ -550,7 +544,12 @@ pub async fn batch(
                     timestamp,
                     assert_errors: assert_errors.lock().unwrap().clone(),
                     api_results: api_results.to_vec().clone(),
-                });
+                };
+                if verbose{
+                    println!("{:#?}", result.clone())
+                };
+                // 添加新结果
+                queue.push_back(result);
             }
         });
     }
@@ -653,36 +652,33 @@ mod tests {
         //     assert_options: Some(assert_vec.clone()),
         // });
         //
+        // endpoints.push(ApiEndpoint{
+        //     name: "无断言".to_string(),
+        //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+        //     method: "GET".to_string(),
+        //     timeout_secs: 10,
+        //     weight: 3,
+        //     json: None,
+        //     form_data: None,
+        //     headers: None,
+        //     cookies: None,
+        //     assert_options: None,
+        // });
+
         endpoints.push(ApiEndpoint{
-            name: "无断言".to_string(),
-            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-            method: "GET".to_string(),
-            timeout_secs: 0,
-            weight: 3,
-            json: None,
-            form_data: None,
+            name: "test-1".to_string(),
+            url: "http://127.0.0.1:8080/".to_string(),
+            method: "POST".to_string(),
+            timeout_secs: 10,
+            weight: 1,
+            json: Some(json!({"name": "test","number": 10086})),
             headers: None,
             cookies: None,
+            form_data:None,
             assert_options: None,
         });
 
-    //     endpoints.push(ApiEndpoint{
-    //         name: "test-1".to_string(),
-    //         url: "http://127.0.0.1:8080".to_string(),
-    //         method: "POST".to_string(),
-    //         timeout_secs: 10,
-    //         weight: 1,
-    //         json: Some(json!({
-    //     "name": "test",
-    //     "number": 10086
-    // })),
-    //         headers: None,
-    //         cookies: None,
-    //         form_data:None,
-    //         assert_options: None,
-    //     });
-
-        match batch(5, 1, false, false, endpoints).await {
+        match batch(15, 10, true, false, endpoints).await {
             Ok(r) => {
                 println!("{:#?}", r)
             }
