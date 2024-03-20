@@ -409,7 +409,8 @@ pub async fn batch(
                                     let api_total_data_bytes = *api_total_response_size_clone.lock().await;
                                     let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
                                     let api_total_requests = api_total_requests_clone.lock().await.clone();
-                                    let api_rps = api_total_requests as f64/ (Instant::now() - test_start).as_secs_f64();
+                                    let api_success_requests = api_successful_requests_clone.lock().await.clone();
+                                    let api_rps = api_success_requests as f64/ (Instant::now() - test_start).as_secs_f64();
                                     let api_success_rate = *api_successful_requests_clone.lock().await as f64 / api_total_requests as f64 * 100.0;
                                     let throughput_per_second_kb = api_total_data_kb / (Instant::now() - test_start).as_secs_f64();
                                     // 给结果赋值
@@ -627,6 +628,8 @@ pub async fn batch(
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use serde_json::json;
+    use tokio::sync::TryAcquireError;
     use super::*;
     use crate::models::assert_option::AssertOption;
 
@@ -650,34 +653,36 @@ mod tests {
         //     assert_options: Some(assert_vec.clone()),
         // });
         //
-        // endpoints.push(ApiEndpoint{
-        //     name: "无断言".to_string(),
-        //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-        //     method: "GET".to_string(),
-        //     timeout_secs: 0,
-        //     weight: 3,
-        //     json: None,
-        //     headers: None,
-        //     cookies: None,
-        //     assert_options: None,
-        // });
-
-        let mut h: HashMap<String, String> = HashMap::new();
-        h.insert("Authorization".to_string(), "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3MTA1MDg5MjUsInVzZXJFbWFpbCI6InF5emhnQDE2My5jb20iLCJ1c2VySXNBZG1pbiI6dHJ1ZSwidXNlck5hbWUiOiJxeXpoZyJ9.neHDiocB7T0XdZ1zqN2xYURDwrh2HpXUBQU09CP3EO8".to_string());
         endpoints.push(ApiEndpoint{
-            name: "请求头".to_string(),
-            url: "https://ooooo.run/api/short/v1/list".to_string(),
-            method: "get".to_string(),
-            timeout_secs: 10,
-            weight: 1,
+            name: "无断言".to_string(),
+            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+            method: "GET".to_string(),
+            timeout_secs: 0,
+            weight: 3,
             json: None,
-            headers: Some(h),
+            form_data: None,
+            headers: None,
             cookies: None,
-            form_data:None,
-            assert_options: Some(assert_vec.clone()),
+            assert_options: None,
         });
 
-        match batch(5, 100, false, false, endpoints).await {
+    //     endpoints.push(ApiEndpoint{
+    //         name: "test-1".to_string(),
+    //         url: "http://127.0.0.1:8080".to_string(),
+    //         method: "POST".to_string(),
+    //         timeout_secs: 10,
+    //         weight: 1,
+    //         json: Some(json!({
+    //     "name": "test",
+    //     "number": 10086
+    // })),
+    //         headers: None,
+    //         cookies: None,
+    //         form_data:None,
+    //         assert_options: None,
+    //     });
+
+        match batch(5, 1, false, false, endpoints).await {
             Ok(r) => {
                 println!("{:#?}", r)
             }
