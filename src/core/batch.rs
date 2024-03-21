@@ -392,14 +392,11 @@ pub async fn batch(
                                                 },
                                             }
                                         }
-
-                                    } else{
-                                        // 正确统计+1
-                                        *successful_requests_clone.lock().await += 1;
-                                        // api正确统计+1
-                                        *api_successful_requests_clone.lock().await += 1;
                                     }
-
+                                    // 正确统计+1
+                                    *successful_requests_clone.lock().await += 1;
+                                    // api正确统计+1
+                                    *api_successful_requests_clone.lock().await += 1;
 
                                     let api_total_data_bytes = *api_total_response_size_clone.lock().await;
                                     let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
@@ -636,21 +633,22 @@ mod tests {
     #[tokio::test]
     async fn test_batch() {
         let mut assert_vec: Vec<AssertOption> = Vec::new();
-        let ref_obj = Value::from(200);
+        let ref_obj = Value::from(429);
         assert_vec.push(AssertOption{ jsonpath: "$.code".to_string(), reference_object: ref_obj });
         let mut endpoints: Vec<ApiEndpoint> = Vec::new();
 
-        // endpoints.push(ApiEndpoint{
-        //     name: "有断言".to_string(),
-        //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-        //     method: "GET".to_string(),
-        //     timeout_secs: 0,
-        //     weight: 1,
-        //     json: None,
-        //     headers: None,
-        //     cookies: None,
-        //     assert_options: Some(assert_vec.clone()),
-        // });
+        endpoints.push(ApiEndpoint{
+            name: "有断言".to_string(),
+            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+            method: "GET".to_string(),
+            timeout_secs: 10,
+            weight: 1,
+            json: None,
+            form_data: None,
+            headers: None,
+            cookies: None,
+            assert_options: Some(assert_vec.clone()),
+        });
         //
         // endpoints.push(ApiEndpoint{
         //     name: "无断言".to_string(),
@@ -665,20 +663,20 @@ mod tests {
         //     assert_options: None,
         // });
 
-        endpoints.push(ApiEndpoint{
-            name: "test-1".to_string(),
-            url: "http://127.0.0.1:8080/".to_string(),
-            method: "POST".to_string(),
-            timeout_secs: 10,
-            weight: 1,
-            json: Some(json!({"name": "test","number": 10086})),
-            headers: None,
-            cookies: None,
-            form_data:None,
-            assert_options: None,
-        });
+        // endpoints.push(ApiEndpoint{
+        //     name: "test-1".to_string(),
+        //     url: "http://127.0.0.1:8080/".to_string(),
+        //     method: "POST".to_string(),
+        //     timeout_secs: 10,
+        //     weight: 1,
+        //     json: Some(json!({"name": "test","number": 10086})),
+        //     headers: None,
+        //     cookies: None,
+        //     form_data:None,
+        //     assert_options: None,
+        // });
 
-        match batch(15, 10, true, false, endpoints).await {
+        match batch(15, 10, true, true, endpoints).await {
             Ok(r) => {
                 println!("{:#?}", r)
             }
