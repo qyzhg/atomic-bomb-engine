@@ -604,7 +604,7 @@ pub async fn batch(
     };
     let api_results = results_arc.lock().await;
     let error_rate = err_count as f64 / total_requests as f64 * 100.0;
-
+    let total_concurrent_number_clone = concurrent_number.lock().await.clone();
 
     let result = Ok(BatchResult{
         total_duration,
@@ -623,7 +623,7 @@ pub async fn batch(
         http_errors: http_errors.lock().unwrap().clone(),
         timestamp,
         assert_errors: assert_errors.lock().unwrap().clone(),
-        total_concurrent_number: *concurrent_number.lock().await,
+        total_concurrent_number: total_concurrent_number_clone,
         api_results:api_results.to_vec().clone(),
     });
     let mut should_stop = RESULTS_SHOULD_STOP.lock();
