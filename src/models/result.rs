@@ -40,6 +40,7 @@ pub struct BatchResult {
     pub http_errors: HashMap<(u16, String, String), u32>,
     pub timestamp: u128,
     pub assert_errors: HashMap<(String, String), u32>,
+    pub total_concurrent_number: i32,
     pub api_results: Vec<ApiResult>
 }
 
@@ -61,6 +62,7 @@ pub struct ApiResult{
     pub err_count: i32,
     pub total_data_kb: f64,
     pub throughput_per_second_kb: f64,
+    pub concurrent_number: i32,
 }
 
 impl ApiResult {
@@ -81,6 +83,7 @@ impl ApiResult {
             err_count: 0,
             total_data_kb: 0.0,
             throughput_per_second_kb: 0.0,
+            concurrent_number: 0,
         }
     }
 }

@@ -46,6 +46,8 @@ pub async fn batch(
     let min_response_time = Arc::new(Mutex::new(u64::MAX));
     // 统计错误数量
     let err_count = Arc::new(Mutex::new(0));
+    // 已开始并发数
+    let concurrent_number = Arc::new(Mutex::new(0));
     // 线程池
     let mut handles = Vec::new();
     // 统计响应大小
@@ -106,6 +108,8 @@ pub async fn batch(
         let api_min_response_time = Arc::new(Mutex::new(u64::MAX));
         // 接口统计错误数量
         let api_err_count = Arc::new(Mutex::new(0));
+        // 接口并发数统计
+        let api_concurrent_number = Arc::new(Mutex::new(0));
         // 接口响应大小
         let api_total_response_size = Arc::new(Mutex::new(0u64));
         // 初始化api结果
@@ -131,6 +135,8 @@ pub async fn batch(
             let api_min_response_time_clone = api_min_response_time.clone();
             // api错误数量统计副本
             let api_err_count_clone = api_err_count.clone();
+            // api并发数统计副本
+            let api_concurrent_number_clone = api_concurrent_number.clone();
             // api结果副本
             let api_result_clone = api_result.clone();
             // api吞吐量副本
@@ -147,6 +153,8 @@ pub async fn batch(
             let min_response_time_clone = min_response_time.clone();
             // 错误次数副本
             let err_count_clone = err_count.clone();
+            // 并发数统计副本
+            let concurrent_number_clone = concurrent_number.clone();
             // 断言错误副本
             let assert_errors_clone = assert_errors.clone();
             // 成功次数副本
@@ -167,6 +175,8 @@ pub async fn batch(
             };
             // 开启并发
             let handle: tokio::task::JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                *concurrent_number_clone.lock().await += 1;
+                *api_concurrent_number_clone.lock().await += 1;
                 while Instant::now() < test_end {
                     // 总请求数
                     *total_requests_clone.lock().await += 1;
@@ -420,6 +430,7 @@ pub async fn batch(
                                     api_res.throughput_per_second_kb = throughput_per_second_kb;
                                     api_res.error_rate = api_res.err_count as f64 / api_res.total_requests as f64 * 100.0;
                                     api_res.method = method_clone.clone().to_uppercase();
+                                    api_res.concurrent_number = *api_concurrent_number_clone.lock().await;
                                     // 向最终结果中添加数据
                                     let mut res = results_clone.lock().await;
                                     if index < res.len() {
@@ -479,6 +490,7 @@ pub async fn batch(
         let min_resp_time_clone = Arc::clone(&min_response_time);
         let assert_error_clone = Arc::clone(&assert_errors);
         let api_results_clone = Arc::clone(&results_arc);
+        let concurrent_number_clone = Arc::clone(&concurrent_number);
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(1));
@@ -518,6 +530,8 @@ pub async fn batch(
                 };
                 let api_results = api_results_clone.lock().await;
                 // println!("{:?}", api_results);
+                // 已开启的并发量
+                let total_concurrent_number = *concurrent_number_clone.lock().await;
                 let mut queue = RESULTS_QUEUE.lock();
                 // 如果队列中有了一个数据了，就移除旧数据
                 if queue.len() == 1 {
@@ -540,6 +554,7 @@ pub async fn batch(
                     http_errors: http_errors.lock().unwrap().clone(),
                     timestamp,
                     assert_errors: assert_errors.lock().unwrap().clone(),
+                    total_concurrent_number,
                     api_results: api_results.to_vec().clone(),
                 };
                 if verbose{
@@ -608,6 +623,7 @@ pub async fn batch(
         http_errors: http_errors.lock().unwrap().clone(),
         timestamp,
         assert_errors: assert_errors.lock().unwrap().clone(),
+        total_concurrent_number: *concurrent_number.lock().await,
         api_results:api_results.to_vec().clone(),
     });
     let mut should_stop = RESULTS_SHOULD_STOP.lock();
@@ -650,18 +666,18 @@ mod tests {
             assert_options: Some(assert_vec.clone()),
         });
         //
-        // endpoints.push(ApiEndpoint{
-        //     name: "无断言".to_string(),
-        //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-        //     method: "GET".to_string(),
-        //     timeout_secs: 10,
-        //     weight: 3,
-        //     json: None,
-        //     form_data: None,
-        //     headers: None,
-        //     cookies: None,
-        //     assert_options: None,
-        // });
+        endpoints.push(ApiEndpoint{
+            name: "无断言".to_string(),
+            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+            method: "GET".to_string(),
+            timeout_secs: 10,
+            weight: 3,
+            json: None,
+            form_data: None,
+            headers: None,
+            cookies: None,
+            assert_options: None,
+        });
 
         // endpoints.push(ApiEndpoint{
         //     name: "test-1".to_string(),
