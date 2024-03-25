@@ -11,6 +11,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use jsonpath_lib::select;
 use tokio::time::interval;
 use std::env;
+use futures::stream::StreamExt;
+
 
 use crate::core::check_endpoints_names::check_endpoints_names;
 use crate::core::sleep_guard::SleepGuard;
@@ -282,53 +284,28 @@ pub async fn batch(
                                     if let Err(e) = api_histogram.increment(duration){
                                         eprintln!("api histogram设置错误:{:?}", e)
                                     }
-                                    // 吞吐量统计
-                                    if let Some(content_length) = response.content_length() {
+                                    // 响应流
+                                    let mut stream = response.bytes_stream();
+                                    // 响应体
+                                    let mut body_bytes = Vec::new();
+                                    while let Some(item) = stream.next().await {
+                                        // 获取当前的chunk
+                                        let chunk = item?;
                                         let mut total_size = total_response_size_clone.lock().await;
-                                        *total_size += content_length;
+                                        *total_size += chunk.len() as u64;
                                         let mut api_total_size = api_total_response_size_clone.lock().await;
-                                        *api_total_size += content_length;
+                                        *api_total_size += chunk.len() as u64;
+                                        body_bytes.extend_from_slice(&chunk);
                                     }
-                                    // 获取响应
-                                    let body_bytes = match response.bytes().await {
-                                        Ok(bytes) => {
-                                            Some(bytes)
-                                        },
-                                        Err(e) => {
-                                            if verbose{
-                                                eprintln!("读取响应失败:{:?}", e.to_string());
-                                            }
-                                            *err_count_clone.lock().await += 1;
-                                            *api_err_count_clone.lock().await += 1;
-                                            http_errors_clone.lock().await.increment(0, e.to_string(), endpoint_clone.lock().await.url.clone());
-                                            continue
-                                        }
-                                    };
                                     if verbose {
                                         let body_bytes_clone = body_bytes.clone();
-                                        let buffer = String::from_utf8(body_bytes_clone.expect("none").to_vec()).expect("无法转换响应体为字符串");
+                                        let buffer = String::from_utf8(body_bytes_clone).expect("无法转换响应体为字符串");
                                         println!("{:+?}", buffer);
                                     }
+                                    // 断言失败的标志
+                                    let mut assertion_failed = false;
                                     // 断言
                                     if let Some(assert_options) = assert_options_clone{
-                                        // 将响应体解析成字节码
-                                        let body_bytes = match body_bytes{
-                                            None => {
-                                                if verbose{
-                                                    eprintln!("响应body为空，无法使用jsonpath获取到数据");
-                                                };
-
-                                                *err_count_clone.lock().await += 1;
-                                                *api_err_count_clone.lock().await += 1;
-                                                assert_errors_clone.lock().await.increment(
-                                                    String::from(endpoint_clone.lock().await.url.clone()),
-                                                    format!("{:?}-JSONPath查询失败:{:?}",api_name_clone ,"响应body为空，无法使用jsonpath获取到数据"));
-                                                continue
-                                            }
-                                            Some(bytes) =>{
-                                                bytes
-                                            }
-                                        };
                                         // 多断言
                                         for assert_option in assert_options {
                                             let json_value: Value = match serde_json::from_slice(&*body_bytes) {
@@ -341,7 +318,8 @@ pub async fn batch(
                                                     assert_errors_clone.lock().await.increment(
                                                             String::from(endpoint_clone.lock().await.url.clone()),
                                                             format!("{:?}-JSONPath查询失败:{:?}",api_name_clone ,e));
-                                                    continue;
+                                                    assertion_failed = true;
+                                                    break;
                                                 }
                                                 Ok(val) => {
                                                     val
@@ -359,7 +337,8 @@ pub async fn batch(
                                                         assert_errors_clone.lock().await.increment(
                                                             String::from(endpoint_clone.lock().await.url.clone()),
                                                             format!("{:?}-JSONPath查询失败:{:?}",api_name_clone ,"没有匹配到任何结果"));
-                                                        continue;
+                                                        assertion_failed = true;
+                                                        break;
                                                     }
                                                     if results.len() >1{
                                                         if verbose{
@@ -370,7 +349,8 @@ pub async fn batch(
                                                         assert_errors_clone.lock().await.increment(
                                                             String::from(endpoint_clone.lock().await.url.clone()),
                                                             format!("{:?}-JSONPath查询失败:{:?}",api_name_clone ,"匹配到多个值，无法进行断言"));
-                                                        continue;
+                                                        assertion_failed = true;
+                                                        break;
                                                     }
                                                     // 取出匹配到的唯一值
                                                     if let Some(result) = results.get(0).map(|&v|v) {
@@ -392,28 +372,32 @@ pub async fn batch(
                                                             *err_count_clone.lock().await += 1;
                                                             *api_err_count_clone.lock().await += 1;
                                                             // 退出断言
+                                                            assertion_failed = true;
                                                             break;
                                                         }
                                                     }
                                                 },
                                                 Err(e) => {
                                                     eprintln!("JSONPath 查询失败: {}", e);
+                                                    assertion_failed = true;
                                                     break;
                                                 },
                                             }
                                         }
                                     }
-                                    // 正确统计+1
-                                    *successful_requests_clone.lock().await += 1;
-                                    // api正确统计+1
-                                    *api_successful_requests_clone.lock().await += 1;
+                                    if !assertion_failed{
+                                        // 正确统计+1
+                                        *successful_requests_clone.lock().await += 1;
+                                        // api正确统计+1
+                                        *api_successful_requests_clone.lock().await += 1;
+                                    };
 
                                     let api_total_data_bytes = *api_total_response_size_clone.lock().await;
                                     let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
                                     let api_total_requests = api_total_requests_clone.lock().await.clone();
                                     let api_success_requests = api_successful_requests_clone.lock().await.clone();
-                                    let api_rps = api_success_requests as f64/ (Instant::now() - test_start).as_secs_f64();
-                                    let api_success_rate = *api_successful_requests_clone.lock().await as f64 / api_total_requests as f64 * 100.0;
+                                    let api_rps = api_total_requests as f64/ (Instant::now() - test_start).as_secs_f64();
+                                    let api_success_rate = api_success_requests as f64 / api_total_requests as f64 * 100.0;
                                     let throughput_per_second_kb = api_total_data_kb / (Instant::now() - test_start).as_secs_f64();
                                     // 给结果赋值
                                     let  mut api_res = api_result_clone.lock().await;
@@ -511,7 +495,7 @@ pub async fn batch(
                 let throughput_kb_s = total_response_size_kb / total_duration;
                 let http_errors = http_errors_clone.lock().await.errors.clone();
                 let assert_errors = assert_error_clone.lock().await.errors.clone();
-                let rps = successful_requests / total_duration;
+                let rps = total_requests / total_duration;
                 let resp_median_line = match  histogram.percentile(50.0){
                     Ok(bucket) => *bucket.range().start(),
                     Err(_) =>0
@@ -614,7 +598,7 @@ pub async fn batch(
         response_time_95: *histogram.percentile(95.0)?.range().start(),
         response_time_99: *histogram.percentile(99.0)?.range().start(),
         total_requests,
-        rps: successful_requests / test_duration_secs as f64,
+        rps: total_requests as f64 / test_duration_secs as f64,
         max_response_time: *max_response_time.lock().await,
         min_response_time: *min_response_time.lock().await,
         err_count:*err_count_clone.lock().await,
@@ -649,7 +633,7 @@ mod tests {
     #[tokio::test]
     async fn test_batch() {
         let mut assert_vec: Vec<AssertOption> = Vec::new();
-        let ref_obj = Value::from(429);
+        let ref_obj = Value::from(2000000);
         assert_vec.push(AssertOption{ jsonpath: "$.code".to_string(), reference_object: ref_obj });
         let mut endpoints: Vec<ApiEndpoint> = Vec::new();
 
@@ -692,7 +676,7 @@ mod tests {
         //     assert_options: None,
         // });
 
-        match batch(15, 10, true, true, endpoints).await {
+        match batch(15, 10, false, true, endpoints).await {
             Ok(r) => {
                 println!("{:#?}", r)
             }
