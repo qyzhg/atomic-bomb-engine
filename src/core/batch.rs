@@ -9,9 +9,11 @@ use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName, USER_AGENT};
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 use jsonpath_lib::select;
-use tokio::time::interval;
+use tokio::time::{interval, sleep};
 use std::env;
 use futures::stream::StreamExt;
+use tokio::sync::Semaphore;
+use std::cmp::min;
 
 
 use crate::core::check_endpoints_names::check_endpoints_names;
@@ -21,14 +23,71 @@ use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::{ApiResult, BatchResult};
 use crate::models::api_endpoint::ApiEndpoint;
+use crate::models::step_option::StepOption;
 
+
+pub struct ConcurrencyController {
+    semaphore: Arc<Semaphore>,
+    total_permits: usize, // 显式跟踪总许可数
+    step_option: Option<StepOption>,
+}
+
+impl ConcurrencyController {
+    pub fn new(total_permits: usize, step_option: Option<StepOption>) -> Self {
+        ConcurrencyController {
+            semaphore: Arc::new(Semaphore::new(0)), // 初始时不分配许可
+            total_permits,
+            step_option,
+        }
+    }
+
+    pub async fn distribute_permits(&self) {
+        if let Some(step_option) = &self.step_option {
+            let mut permits_added = 0;
+            while permits_added < self.total_permits {
+                sleep(Duration::from_secs(step_option.increase_interval)).await; // 无需转换
+                let permits_to_add = min(step_option.increase_step, self.total_permits - permits_added);
+                self.semaphore.add_permits(permits_to_add);
+                permits_added += permits_to_add;
+                println!("Added {} permits, total added: {}", permits_to_add, permits_added);
+            }
+        } else {
+            self.semaphore.add_permits(self.total_permits); // 一次性添加所有许可
+            println!("All permits added at once");
+        }
+    }
+
+    pub fn get_semaphore(&self) -> Arc<Semaphore> {
+        self.semaphore.clone()
+    }
+}
+
+async fn adjust_semaphore_permits(semaphore: Arc<Semaphore>, total_tasks: usize, step_option: Option<StepOption>) {
+    match step_option {
+        Some(option) => {
+            let mut added_permits = 0;
+            while added_permits < total_tasks {
+                let permits_to_add = std::cmp::min(option.increase_step, (total_tasks - added_permits) as u32 as usize);
+                semaphore.add_permits(permits_to_add as usize);
+                added_permits += permits_to_add as usize;
+                println!("Added {} permits, total added: {}", permits_to_add, added_permits);
+                sleep(Duration::from_secs(option.increase_interval as u64)).await;
+            }
+        },
+        None => {
+            semaphore.add_permits(total_tasks);
+            println!("All permits added at once");
+        },
+    }
+}
 
 pub async fn batch(
     test_duration_secs: u64,
     concurrent_requests: usize,
     verbose: bool,
     should_prevent: bool,
-    api_endpoints: Vec<ApiEndpoint>
+    api_endpoints: Vec<ApiEndpoint>,
+    step_option: Option<StepOption>
 ) -> anyhow::Result<BatchResult> {
     // 阻止电脑休眠
     let _guard = SleepGuard::new(should_prevent);
@@ -36,6 +95,7 @@ pub async fn batch(
     if let Err(e) = check_endpoints_names(api_endpoints.clone()){
         return Err(Error::msg(e));
     }
+    let concurrent_requests_a = Arc::new(Mutex::new(concurrent_requests));
     // 总响应时间统计
     let histogram = Arc::new(Mutex::new(Histogram::new(14, 20).unwrap()));
     // 成功数据统计
@@ -82,6 +142,14 @@ pub async fn batch(
         "{} {} ({}; {})",
         app_name, app_version, os_type, os_version
     );
+    let controller = Arc::new(ConcurrencyController::new(concurrent_requests, step_option));
+    // 分配许可
+    tokio::spawn({
+        let controller_clone = controller.clone();
+        async move {
+            controller_clone.distribute_permits().await;
+        }
+    });
     // 针对每一个接口开始配置
     for (index, endpoint_arc) in api_endpoints_arc.iter().enumerate() {
         let endpoint = endpoint_arc.lock().await;
@@ -175,8 +243,12 @@ pub async fn batch(
             } else {
                 client_builder.build().context("构建http客户端失败")?
             };
+            let controller_clone = controller.clone();
             // 开启并发
             let handle: tokio::task::JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                let semaphore = controller_clone.get_semaphore();
+                let _permit = semaphore.acquire().await.expect("获取信号量许可失败");
+                // 统计并发数
                 *concurrent_number_clone.lock().await += 1;
                 *api_concurrent_number_clone.lock().await += 1;
                 while Instant::now() < test_end {
@@ -676,7 +748,7 @@ mod tests {
         //     assert_options: None,
         // });
 
-        match batch(15, 10, false, true, endpoints).await {
+        match batch(15, 100, true, true, endpoints, Option::from(StepOption { increase_step: 10, increase_interval: 3 })).await {
             Ok(r) => {
                 println!("{:#?}", r)
             }
