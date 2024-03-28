@@ -122,17 +122,29 @@ pub async fn batch(
         let api_total_response_size = Arc::new(Mutex::new(0u64));
         // useragent副本
         let user_agent_value_api_clone = user_agent_value.clone();
+        // 总请求数副本
         let total_requests_api_clone = Arc::clone(&total_requests);
+        // 成功数副本
         let successful_requests_api_clone = Arc::clone(&successful_requests);
+        // 统计桶副本
         let histogram_api_clone = Arc::clone(&histogram);
+        // 响应大小副本
         let total_response_size_api_clone = Arc::clone(&total_response_size);
+        // 错误副本
         let http_errors_api_clone = Arc::clone(&http_errors);
+        // 错误数量副本
         let err_count_api_clone = Arc::clone(&err_count);
+        // 最大响应时间副本
         let max_response_time_api_clone = Arc::clone(&max_response_time);
+        // 最小响应时间副本
         let min_response_time_api_clone = Arc::clone(&min_response_time);
+        // 断言错误副本
         let assert_errors_api_clone = Arc::clone(&assert_errors);
+        // 结果副本
         let results_arc_api_clone = Arc::clone(&results_arc);
+        // 并发数副本
         let concurrent_number_api_clone = Arc::clone(&concurrent_number);
+        // 各接口线程handle副本
         let request_handles_arc_api_clone = Arc::clone(&request_handles_arc);
         // 初始化api结果
         let mut r = ApiResult::new();
