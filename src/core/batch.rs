@@ -159,7 +159,7 @@ pub async fn batch(
             Some(option) => {
                 // 计算每个接口的步长
                 let step = option.increase_step as f64 * weight_ratio;
-                println!("{:?}-{:?}", name.clone(), step);
+                // println!("{:?}-{:?}", name.clone(), step);
                 Arc::new(ConcurrencyController::new(concurrency_for_endpoint, Option::from(InnerStepOption { increase_step: step, increase_interval: option.increase_interval })))
             }
         };
