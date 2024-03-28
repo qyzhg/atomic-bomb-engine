@@ -1,90 +1,30 @@
 use std::str::FromStr;
-use std::sync::{Arc};
+use std::sync::Arc;
 use histogram::Histogram;
 use std::time::{Duration, Instant};
 use anyhow::{Context, Error};
 use reqwest::{Client, Method, StatusCode};
-use tokio::sync::{Mutex};
-use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName, USER_AGENT};
+use tokio::sync::Mutex;
+use reqwest::header::{COOKIE, HeaderMap, HeaderName, HeaderValue, USER_AGENT};
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 use jsonpath_lib::select;
-use tokio::time::{interval, sleep};
+use tokio::time::interval;
 use std::env;
 use futures::stream::StreamExt;
-use tokio::sync::Semaphore;
-use std::cmp::min;
 use futures::future::join_all;
 use tokio::task::JoinHandle;
 
 
 use crate::core::check_endpoints_names::check_endpoints_names;
+use crate::core::concurrency_controller::ConcurrencyController;
 use crate::core::sleep_guard::SleepGuard;
 use crate::core::status_share::{RESULTS_QUEUE, RESULTS_SHOULD_STOP};
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::{ApiResult, BatchResult};
 use crate::models::api_endpoint::ApiEndpoint;
-use crate::models::step_option::StepOption;
-
-
-pub struct ConcurrencyController {
-    semaphore: Arc<Semaphore>,
-    total_permits: usize,
-    step_option: Option<StepOption>,
-}
-
-impl ConcurrencyController {
-    pub fn new(total_permits: usize, step_option: Option<StepOption>) -> Self {
-        let mut init_semaphore: usize = 0;
-        if let Some(step_option) = step_option.clone(){
-            init_semaphore = step_option.increase_step
-        };
-        ConcurrencyController {
-            semaphore: Arc::new(Semaphore::new(init_semaphore)),
-            total_permits,
-            step_option,
-        }
-    }
-
-    pub async fn distribute_permits(&self) {
-        if let Some(step_option) = &self.step_option {
-            let mut permits_added = 0;
-            while permits_added < self.total_permits {
-                sleep(Duration::from_secs(step_option.increase_interval)).await;
-                let permits_to_add = min(step_option.increase_step, self.total_permits - permits_added);
-                self.semaphore.add_permits(permits_to_add);
-                permits_added += permits_to_add;
-            }
-        } else {
-            self.semaphore.add_permits(self.total_permits); // 一次性添加所有许可
-            println!("All permits added at once");
-        }
-    }
-
-    pub fn get_semaphore(&self) -> Arc<Semaphore> {
-        self.semaphore.clone()
-    }
-}
-
-async fn adjust_semaphore_permits(semaphore: Arc<Semaphore>, total_tasks: usize, step_option: Option<StepOption>) {
-    match step_option {
-        Some(option) => {
-            let mut added_permits = 0;
-            while added_permits < total_tasks {
-                let permits_to_add = std::cmp::min(option.increase_step, (total_tasks - added_permits) as u32 as usize);
-                semaphore.add_permits(permits_to_add as usize);
-                added_permits += permits_to_add as usize;
-                println!("Added {} permits, total added: {}", permits_to_add, added_permits);
-                sleep(Duration::from_secs(option.increase_interval as u64)).await;
-            }
-        },
-        None => {
-            semaphore.add_permits(total_tasks);
-            println!("All permits added at once");
-        },
-    }
-}
+use crate::models::step_option::{InnerStepOption, StepOption};
 
 pub async fn batch(
     test_duration_secs: u64,
@@ -180,6 +120,7 @@ pub async fn batch(
         let api_concurrent_number = Arc::new(Mutex::new(0));
         // 接口响应大小
         let api_total_response_size = Arc::new(Mutex::new(0u64));
+        // useragent副本
         let user_agent_value_api_clone = user_agent_value.clone();
         let total_requests_api_clone = Arc::clone(&total_requests);
         let successful_requests_api_clone = Arc::clone(&successful_requests);
@@ -198,10 +139,21 @@ pub async fn batch(
         r.name = name.clone();
         r.url = url.clone();
         let api_result = Arc::new(Mutex::new(r));
-        let controller = Arc::new(ConcurrencyController::new(concurrency_for_endpoint, step_option.clone()));
-        // 分配许可
+        // 根据step初始化并发控制器
+        let controller =  match step_option.clone() {
+            None => {
+                Arc::new(ConcurrencyController::new(concurrency_for_endpoint, None))
+            }
+            Some(option) => {
+                // 计算每个接口的步长
+                let step = option.increase_step as f64 * weight_ratio;
+                println!("{:?}-{:?}", name.clone(), step);
+                Arc::new(ConcurrencyController::new(concurrency_for_endpoint, Option::from(InnerStepOption { increase_step: step, increase_interval: option.increase_interval })))
+            }
+        };
+        // 后台启动并发控制器
         tokio::spawn({
-            let controller_clone = controller.clone();
+            let controller_clone = Arc::clone(&controller);
             async move {
                 controller_clone.distribute_permits().await;
             }
@@ -269,8 +221,8 @@ pub async fn batch(
                     let semaphore = controller_clone.get_semaphore();
                     let _permit = semaphore.acquire().await.expect("获取信号量许可失败");
                     // 统计并发数
-                    *concurrent_number_clone.lock().await += 1;
                     *api_concurrent_number_clone.lock().await += 1;
+                    *concurrent_number_clone.lock().await += 1;
                     while Instant::now() < test_end {
                         // 总请求数
                         *total_requests_clone.lock().await += 1;
@@ -731,9 +683,6 @@ pub async fn batch(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-    use serde_json::json;
-    use tokio::sync::TryAcquireError;
     use super::*;
     use crate::models::assert_option::AssertOption;
 
