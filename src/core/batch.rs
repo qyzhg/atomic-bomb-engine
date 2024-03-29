@@ -324,7 +324,6 @@ pub async fn batch(
                                                 body_bytes.extend_from_slice(&chunk);
                                             }
                                             Err(e) => {
-                                                eprintln!("获取流数据失败::{:?}", e);
                                                 *api_err_count_clone.lock().await += 1;
                                                 *err_count_clone.lock().await += 1;
                                                 http_errors_clone.lock().await.increment(0, format!("获取流数据失败::{:?}", e),endpoint_clone.lock().await.url.clone());
@@ -580,6 +579,7 @@ pub async fn batch(
                     api_results: api_results.to_vec().clone(),
                 };
                 let elapsed = test_start.elapsed();
+                println!("{:?}-{:#?}",elapsed.as_millis(), result.clone());
                 if verbose{
                     println!("{:?}-{:#?}",elapsed.as_millis(), result.clone());
                 };
