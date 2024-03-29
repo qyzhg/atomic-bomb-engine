@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tokio::sync::{Semaphore, Mutex}; // 引入tokio的Mutex
+use tokio::sync::{Semaphore, Mutex};
 use std::time::Duration;
 use std::cmp::min;
 use crate::models::step_option::InnerStepOption;
@@ -8,7 +8,7 @@ pub struct ConcurrencyController {
     semaphore: Arc<Semaphore>,
     total_permits: usize,
     step_option: Option<InnerStepOption>,
-    fractional_accumulator: Mutex<f64>, // 使用tokio的Mutex
+    fractional_accumulator: Mutex<f64>,
 }
 
 impl ConcurrencyController {
