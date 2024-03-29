@@ -328,7 +328,7 @@ pub async fn batch(
                                                 *api_err_count_clone.lock().await += 1;
                                                 *err_count_clone.lock().await += 1;
                                                 http_errors_clone.lock().await.increment(0, format!("获取流数据失败::{:?}", e),endpoint_clone.lock().await.url.clone());
-                                                continue
+                                                break
                                             }
                                         };
                                     }
@@ -345,7 +345,7 @@ pub async fn batch(
                                         for assert_option in assert_options {
                                             if body_bytes.len() == 0{
                                                 eprintln!("无法获取到结构体，不进行断言");
-                                                continue
+                                                break
                                             }
                                             let json_value: Value = match serde_json::from_slice(&*body_bytes) {
                                                 Err(e) =>{
