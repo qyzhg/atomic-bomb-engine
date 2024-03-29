@@ -1,6 +1,6 @@
 [package]
 name = "atomic-bomb-engine"
-version = "0.6.2"
+version = "0.6.5"
 edition = "2021"
 description = "A high performance torture testing engine"
 license = "MIT"

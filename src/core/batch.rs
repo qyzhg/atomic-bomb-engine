@@ -118,30 +118,6 @@ pub async fn batch(
         let api_concurrent_number = Arc::new(Mutex::new(0));
         // 接口响应大小
         let api_total_response_size = Arc::new(Mutex::new(0u64));
-        // useragent副本
-        let user_agent_value_api_clone = user_agent_value.clone();
-        // 总请求数副本
-        let total_requests_api_clone = Arc::clone(&total_requests);
-        // 成功数副本
-        let successful_requests_api_clone = Arc::clone(&successful_requests);
-        // 统计桶副本
-        let histogram_api_clone = Arc::clone(&histogram);
-        // 响应大小副本
-        let total_response_size_api_clone = Arc::clone(&total_response_size);
-        // 错误副本
-        let http_errors_api_clone = Arc::clone(&http_errors);
-        // 错误数量副本
-        let err_count_api_clone = Arc::clone(&err_count);
-        // 最大响应时间副本
-        let max_response_time_api_clone = Arc::clone(&max_response_time);
-        // 最小响应时间副本
-        let min_response_time_api_clone = Arc::clone(&min_response_time);
-        // 断言错误副本
-        let assert_errors_api_clone = Arc::clone(&assert_errors);
-        // 结果副本
-        let results_arc_api_clone = Arc::clone(&results_arc);
-        // 并发数副本
-        let concurrent_number_api_clone = Arc::clone(&concurrent_number);
         // 初始化api结果
         let mut r = ApiResult::new();
         r.name = name.clone();
@@ -155,7 +131,6 @@ pub async fn batch(
             Some(option) => {
                 // 计算每个接口的步长
                 let step = option.increase_step as f64 * weight_ratio;
-                // println!("{:?}-{:?}", name.clone(), step);
                 Arc::new(ConcurrencyController::new(concurrency_for_endpoint, Option::from(InnerStepOption { increase_step: step, increase_interval: option.increase_interval })))
             }
         };
@@ -168,7 +143,7 @@ pub async fn batch(
         });
         for _ in 0..concurrency_for_endpoint {
             // 数据桶副本
-            let histogram_clone = histogram_api_clone.clone();
+            let histogram_clone = histogram.clone();
             // 任务名称
             let api_name_clone = name.clone();
             // api数据桶副本
@@ -190,29 +165,29 @@ pub async fn batch(
             // api吞吐量副本
             let api_total_response_size_clone = api_total_response_size.clone();
             // 总请求数记录副本
-            let total_requests_clone = Arc::clone(&total_requests_api_clone);
+            let total_requests_clone = Arc::clone(&total_requests);
             // 每个接口端点副本
             let endpoint_clone = Arc::clone(&endpoint_arc);
             // 最大响应时间副本
-            let max_response_time_clone = max_response_time_api_clone.clone();
+            let max_response_time_clone = max_response_time.clone();
             // 响应大小统计副本
-            let total_response_size_clone = total_response_size_api_clone.clone();
+            let total_response_size_clone = total_response_size.clone();
             // 最小响应时间副本
-            let min_response_time_clone = min_response_time_api_clone.clone();
+            let min_response_time_clone = min_response_time.clone();
             // 错误次数副本
-            let err_count_clone = err_count_api_clone.clone();
+            let err_count_clone = err_count.clone();
             // 并发数统计副本
-            let concurrent_number_clone = concurrent_number_api_clone.clone();
+            let concurrent_number_clone = concurrent_number.clone();
             // 断言错误副本
-            let assert_errors_clone = assert_errors_api_clone.clone();
+            let assert_errors_clone = assert_errors.clone();
             // 成功次数副本
-            let successful_requests_clone = successful_requests_api_clone.clone();
+            let successful_requests_clone = successful_requests.clone();
             // http错误副本
-            let http_errors_clone = http_errors_api_clone.clone();
+            let http_errors_clone = http_errors.clone();
             // results副本
-            let results_clone = results_arc_api_clone.clone();
+            let results_clone = results_arc.clone();
             // user-agent副本
-            let user_agent_clone = user_agent_value_api_clone.clone();
+            let user_agent_clone = user_agent_value.clone();
             // 构建http客户端
             let client_builder = Client::builder();
             // 如果有超时时间就将client设置
@@ -339,13 +314,22 @@ pub async fn batch(
                                     // 响应体
                                     let mut body_bytes = Vec::new();
                                     while let Some(item) = stream.next().await {
-                                        // 获取当前的chunk
-                                        let chunk = item?;
-                                        let mut total_size = total_response_size_clone.lock().await;
-                                        *total_size += chunk.len() as u64;
-                                        let mut api_total_size = api_total_response_size_clone.lock().await;
-                                        *api_total_size += chunk.len() as u64;
-                                        body_bytes.extend_from_slice(&chunk);
+                                        match item{
+                                            Ok(chunk) => {
+                                                // 获取当前的chunk
+                                                let mut total_size = total_response_size_clone.lock().await;
+                                                *total_size += chunk.len() as u64;
+                                                let mut api_total_size = api_total_response_size_clone.lock().await;
+                                                *api_total_size += chunk.len() as u64;
+                                                body_bytes.extend_from_slice(&chunk);
+                                            }
+                                            Err(e) => {
+                                                *api_err_count_clone.lock().await += 1;
+                                                *err_count_clone.lock().await += 1;
+                                                http_errors_clone.lock().await.increment(0, format!("获取响应流失败::{:?}", e),endpoint_clone.lock().await.url.clone());
+                                                break
+                                            }
+                                        };
                                     }
                                     if verbose {
                                         let body_bytes_clone = body_bytes.clone();
@@ -358,6 +342,10 @@ pub async fn batch(
                                     if let Some(assert_options) = assert_options_clone{
                                         // 多断言
                                         for assert_option in assert_options {
+                                            if body_bytes.len() == 0{
+                                                eprintln!("无法获取到结构体，不进行断言");
+                                                break
+                                            }
                                             let json_value: Value = match serde_json::from_slice(&*body_bytes) {
                                                 Err(e) =>{
                                                     if verbose{
@@ -590,8 +578,9 @@ pub async fn batch(
                     total_concurrent_number,
                     api_results: api_results.to_vec().clone(),
                 };
+                let elapsed = test_start.elapsed();
                 if verbose{
-                    println!("{:#?}", result.clone())
+                    println!("{:?}-{:#?}",elapsed.as_millis(), result.clone());
                 };
                 // 添加新结果
                 queue.push_back(result);
@@ -599,24 +588,26 @@ pub async fn batch(
         });
     }
 
-    for handle in handles {
-        match handle.await {
-            Ok(result) => {
-                match result {
+    // 等待任务完成
+    let task_results = join_all(handles).await;
+    for task_result in task_results{
+        match task_result {
+            Ok(res) => {
+                match res {
                     Ok(_) => {
-                        if verbose {
-                            println!("任务成功完成")
+                        if verbose{
+                            println!("任务完成")
                         }
-                    },
+                    }
                     Err(e) => {
-                        return Err(Error::msg(format!("异步任务内部错误:{:?}", e)));
-                    },
-                }
-            },
-            Err(e) => {
-                return Err(Error::msg(format!("协程被取消或意外停止:{:?}", e)));
-            },
-        }
+                        eprintln!("异步任务内部错误::{:?}", e)
+                    }
+                };
+            }
+            Err(err) => {
+                eprintln!("协程被取消或意外停止::{:?}", err);
+            }
+        };
     }
 
     // 对结果进行赋值
@@ -722,7 +713,7 @@ mod tests {
         //     assert_options: None,
         // });
 
-        match batch(20, 10, true, true, endpoints, Option::from(StepOption { increase_step: 5, increase_interval: 2 })).await {
+        match batch(20, 100, true, true, endpoints, Option::from(StepOption { increase_step: 5, increase_interval: 2 })).await {
             Ok(r) => {
                 println!("{:#?}", r)
             }
