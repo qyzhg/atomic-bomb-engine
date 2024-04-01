@@ -326,7 +326,7 @@ pub async fn batch(
                                             Err(e) => {
                                                 *api_err_count_clone.lock().await += 1;
                                                 *err_count_clone.lock().await += 1;
-                                                http_errors_clone.lock().await.increment(0, format!("获取响应流失败::{:?}", e),endpoint_clone.lock().await.url.clone());
+                                                http_errors_clone.lock().await.increment(0, format!("获取响应流失败::{:?}", e), endpoint_clone.lock().await.url.clone()).await;
                                                 break
                                             }
                                         };
@@ -468,7 +468,7 @@ pub async fn batch(
                                     let status_code = u16::from(response.status());
                                     let err_msg = format!("HTTP 错误: 状态码 {}", status_code);
                                     let url = response.url().to_string();
-                                    http_errors_clone.lock().await.increment(status_code, err_msg, url);
+                                    http_errors_clone.lock().await.increment(status_code, err_msg, url).await;
                                     if verbose{
                                         println!("{:?}-HTTP 错误: 状态码 {:?}",api_name_clone, status_code)
                                     }
@@ -489,7 +489,7 @@ pub async fn batch(
                                 }
                             }
                             let err_msg = e.to_string();
-                            http_errors_clone.lock().await.increment(status_code, err_msg, endpoint_clone.lock().await.url.clone());
+                            http_errors_clone.lock().await.increment(status_code, err_msg, endpoint_clone.lock().await.url.clone()).await;
                         },
                     }
                 }
@@ -572,7 +572,7 @@ pub async fn batch(
                     err_count,
                     total_data_kb:total_response_size_kb,
                     throughput_per_second_kb: throughput_kb_s,
-                    http_errors: http_errors.lock().unwrap().clone(),
+                    http_errors: http_errors.lock().await.clone(),
                     timestamp,
                     assert_errors: assert_errors.lock().unwrap().clone(),
                     total_concurrent_number,
@@ -644,7 +644,7 @@ pub async fn batch(
         err_count:*err_count_clone.lock().await,
         total_data_kb:total_response_size_kb,
         throughput_per_second_kb: throughput_kb_s,
-        http_errors: http_errors.lock().unwrap().clone(),
+        http_errors: http_errors.lock().await.clone(),
         timestamp,
         assert_errors: assert_errors.lock().unwrap().clone(),
         total_concurrent_number: total_concurrent_number_clone,

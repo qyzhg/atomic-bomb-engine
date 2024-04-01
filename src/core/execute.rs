@@ -323,7 +323,7 @@ pub async fn run(
                                 let status_code = u16::from(response.status());
                                 let err_msg = format!("HTTP 错误: 状态码 {}", status_code);
                                 let url = response.url().to_string();
-                                http_errors_clone.lock().await.increment(status_code, err_msg, url);
+                                http_errors_clone.lock().await.increment(status_code, err_msg, url).await;
                             }
                         }
                     },
@@ -340,7 +340,7 @@ pub async fn run(
                             }
                         }
                         let err_msg = e.to_string();
-                        http_errors_clone.lock().await.increment(status_code, err_msg, url_string);
+                        http_errors_clone.lock().await.increment(status_code, err_msg, url_string).await;
                     }
                 }
             }
@@ -414,7 +414,7 @@ pub async fn run(
                     err_count,
                     total_data_kb:total_response_size_kb,
                     throughput_per_second_kb: throughput_kb_s,
-                    http_errors: http_errors.lock().unwrap().clone(),
+                    http_errors: http_errors.lock().await.clone(),
                     timestamp,
                     assert_errors: assert_errors.lock().unwrap().clone(),
                 });
@@ -455,7 +455,7 @@ pub async fn run(
         err_count:*err_count_clone.lock().await,
         total_data_kb:total_response_size_kb,
         throughput_per_second_kb: throughput_kb_s,
-        http_errors: http_errors.lock().unwrap().clone(),
+        http_errors: http_errors.lock().await.clone(),
         timestamp,
         assert_errors: assert_errors.lock().unwrap().clone(),
     };
