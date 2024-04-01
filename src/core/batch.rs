@@ -515,7 +515,7 @@ pub async fn batch(
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(1));
-            let should_stop = *RESULTS_SHOULD_STOP.lock();
+            let should_stop = *RESULTS_SHOULD_STOP.lock().await;
             while !should_stop {
                 interval.tick().await;
 
@@ -553,7 +553,7 @@ pub async fn batch(
                 // println!("{:?}", api_results);
                 // 已开启的并发量
                 let total_concurrent_number = *concurrent_number_clone.lock().await;
-                let mut queue = RESULTS_QUEUE.lock();
+                let mut queue = RESULTS_QUEUE.lock().await;
                 // 如果队列中有了一个数据了，就移除旧数据
                 if queue.len() == 1 {
                     queue.pop_front();
@@ -650,7 +650,7 @@ pub async fn batch(
         total_concurrent_number: total_concurrent_number_clone,
         api_results:api_results.to_vec().clone(),
     });
-    let mut should_stop = RESULTS_SHOULD_STOP.lock();
+    let mut should_stop = RESULTS_SHOULD_STOP.lock().await;
     *should_stop = true;
     eprintln!("测试完成！");
     result

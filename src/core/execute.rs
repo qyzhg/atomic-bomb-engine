@@ -362,7 +362,7 @@ pub async fn run(
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(1));
-            let should_stop = *SINGLE_SHOULD_STOP.lock();
+            let should_stop = *SINGLE_SHOULD_STOP.lock().await;
             while !should_stop {
                 interval.tick().await;
                 let err_count = *err_count_clone.lock().await;
@@ -395,7 +395,7 @@ pub async fn run(
                     Err(_) => 0,
                 };
 
-                let mut queue = SINGLE_RESULT_QUEUE.lock();
+                let mut queue = SINGLE_RESULT_QUEUE.lock().await;
                 // 如果队列中有了一个数据了，就移除旧数据
                 if queue.len() == 1 {
                     queue.pop_front();
@@ -459,7 +459,7 @@ pub async fn run(
         timestamp,
         assert_errors: assert_errors.lock().unwrap().clone(),
     };
-    let mut should_stop = SINGLE_SHOULD_STOP.lock();
+    let mut should_stop = SINGLE_SHOULD_STOP.lock().await;
     *should_stop = true;
     eprintln!("压测结束");
     Ok(test_result)
