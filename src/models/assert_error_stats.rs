@@ -1,5 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
 use std::collections::HashMap;
+use tokio::sync::Mutex;
+
 
 pub struct AssertErrorStats {
     // {(url, 错误信息): 次数}
@@ -14,8 +16,8 @@ impl AssertErrorStats {
     }
 
     // 增加一个错误和对应的出现次数
-    pub(crate) fn increment(&self, url: String, error_message: String) {
-        let mut errors = self.errors.lock().unwrap();
+    pub(crate) async fn increment(&self, url: String, error_message: String) {
+        let mut errors = self.errors.lock().await;
         *errors.entry((url, error_message)).or_insert(0) += 1;
     }
 }

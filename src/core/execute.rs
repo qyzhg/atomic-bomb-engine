@@ -299,7 +299,7 @@ pub async fn run(
                                                         // 断言失败， 失败次数+1
                                                         *err_count_clone.lock().await += 1;
                                                         // 将失败情况加入到一个容器中
-                                                        assert_errors_clone.lock().await.increment(String::from(url_string), format!("预期结果：{:?}, 实际结果：{:?}", assert_option.reference_object, result));
+                                                        assert_errors_clone.lock().await.increment(String::from(url_string), format!("预期结果：{:?}, 实际结果：{:?}", assert_option.reference_object, result)).await;
                                                         // 退出断言
                                                         break;
                                                     }
@@ -416,7 +416,7 @@ pub async fn run(
                     throughput_per_second_kb: throughput_kb_s,
                     http_errors: http_errors.lock().await.clone(),
                     timestamp,
-                    assert_errors: assert_errors.lock().unwrap().clone(),
+                    assert_errors: assert_errors.lock().await.clone(),
                 });
             }
         });
@@ -457,7 +457,7 @@ pub async fn run(
         throughput_per_second_kb: throughput_kb_s,
         http_errors: http_errors.lock().await.clone(),
         timestamp,
-        assert_errors: assert_errors.lock().unwrap().clone(),
+        assert_errors: assert_errors.lock().await.clone(),
     };
     let mut should_stop = SINGLE_SHOULD_STOP.lock().await;
     *should_stop = true;

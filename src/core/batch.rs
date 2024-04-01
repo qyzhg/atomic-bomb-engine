@@ -355,7 +355,7 @@ pub async fn batch(
                                                     *api_err_count_clone.lock().await += 1;
                                                     assert_errors_clone.lock().await.increment(
                                                         String::from(endpoint_clone.lock().await.url.clone()),
-                                                        format!("{:?}-JSONPath查询失败:{:?}",api_name_clone ,e));
+                                                        format!("{:?}-JSONPath查询失败:{:?}", api_name_clone, e)).await;
                                                     assertion_failed = true;
                                                     break;
                                                 }
@@ -374,7 +374,7 @@ pub async fn batch(
                                                         *api_err_count_clone.lock().await += 1;
                                                         assert_errors_clone.lock().await.increment(
                                                             String::from(endpoint_clone.lock().await.url.clone()),
-                                                            format!("{:?}-JSONPath查询失败:{:?}",api_name_clone ,"没有匹配到任何结果"));
+                                                            format!("{:?}-JSONPath查询失败:{:?}", api_name_clone, "没有匹配到任何结果")).await;
                                                         assertion_failed = true;
                                                         break;
                                                     }
@@ -386,7 +386,7 @@ pub async fn batch(
                                                         *api_err_count_clone.lock().await += 1;
                                                         assert_errors_clone.lock().await.increment(
                                                             String::from(endpoint_clone.lock().await.url.clone()),
-                                                            format!("{:?}-JSONPath查询失败:{:?}",api_name_clone ,"匹配到多个值，无法进行断言"));
+                                                            format!("{:?}-JSONPath查询失败:{:?}", api_name_clone, "匹配到多个值，无法进行断言")).await;
                                                         assertion_failed = true;
                                                         break;
                                                     }
@@ -400,9 +400,9 @@ pub async fn batch(
                                                                 increment(
                                                                     String::from(endpoint_clone.lock().await.url.clone()),
                                                                     format!(
-                                                                        "{:?}-预期结果：{:?}, 实际结果：{:?}",api_name_clone ,assert_option.reference_object, result
+                                                                        "{:?}-预期结果：{:?}, 实际结果：{:?}", api_name_clone, assert_option.reference_object, result
                                                                     )
-                                                                );
+                                                                ).await;
                                                             if verbose{
                                                                 eprintln!("{:?}-预期结果：{:?}, 实际结果：{:?}",api_name_clone ,assert_option.reference_object, result)
                                                             }
@@ -574,7 +574,7 @@ pub async fn batch(
                     throughput_per_second_kb: throughput_kb_s,
                     http_errors: http_errors.lock().await.clone(),
                     timestamp,
-                    assert_errors: assert_errors.lock().unwrap().clone(),
+                    assert_errors: assert_errors.lock().await.clone(),
                     total_concurrent_number,
                     api_results: api_results.to_vec().clone(),
                 };
@@ -646,7 +646,7 @@ pub async fn batch(
         throughput_per_second_kb: throughput_kb_s,
         http_errors: http_errors.lock().await.clone(),
         timestamp,
-        assert_errors: assert_errors.lock().unwrap().clone(),
+        assert_errors: assert_errors.lock().await.clone(),
         total_concurrent_number: total_concurrent_number_clone,
         api_results:api_results.to_vec().clone(),
     });
