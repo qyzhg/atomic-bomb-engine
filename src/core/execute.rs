@@ -299,7 +299,7 @@ pub async fn run(
                                                         // 断言失败， 失败次数+1
                                                         *err_count_clone.lock().await += 1;
                                                         // 将失败情况加入到一个容器中
-                                                        assert_errors_clone.lock().await.increment(String::from(url_string), format!("预期结果：{:?}, 实际结果：{:?}", assert_option.reference_object, result));
+                                                        assert_errors_clone.lock().await.increment(String::from(url_string), format!("预期结果：{:?}, 实际结果：{:?}", assert_option.reference_object, result)).await;
                                                         // 退出断言
                                                         break;
                                                     }
@@ -323,7 +323,7 @@ pub async fn run(
                                 let status_code = u16::from(response.status());
                                 let err_msg = format!("HTTP 错误: 状态码 {}", status_code);
                                 let url = response.url().to_string();
-                                http_errors_clone.lock().await.increment(status_code, err_msg, url);
+                                http_errors_clone.lock().await.increment(status_code, err_msg, url).await;
                             }
                         }
                     },
@@ -340,7 +340,7 @@ pub async fn run(
                             }
                         }
                         let err_msg = e.to_string();
-                        http_errors_clone.lock().await.increment(status_code, err_msg, url_string);
+                        http_errors_clone.lock().await.increment(status_code, err_msg, url_string).await;
                     }
                 }
             }
@@ -362,7 +362,7 @@ pub async fn run(
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(1));
-            let should_stop = *SINGLE_SHOULD_STOP.lock();
+            let should_stop = *SINGLE_SHOULD_STOP.lock().await;
             while !should_stop {
                 interval.tick().await;
                 let err_count = *err_count_clone.lock().await;
@@ -395,7 +395,7 @@ pub async fn run(
                     Err(_) => 0,
                 };
 
-                let mut queue = SINGLE_RESULT_QUEUE.lock();
+                let mut queue = SINGLE_RESULT_QUEUE.lock().await;
                 // 如果队列中有了一个数据了，就移除旧数据
                 if queue.len() == 1 {
                     queue.pop_front();
@@ -414,9 +414,9 @@ pub async fn run(
                     err_count,
                     total_data_kb:total_response_size_kb,
                     throughput_per_second_kb: throughput_kb_s,
-                    http_errors: http_errors.lock().unwrap().clone(),
+                    http_errors: http_errors.lock().await.clone(),
                     timestamp,
-                    assert_errors: assert_errors.lock().unwrap().clone(),
+                    assert_errors: assert_errors.lock().await.clone(),
                 });
             }
         });
@@ -455,11 +455,11 @@ pub async fn run(
         err_count:*err_count_clone.lock().await,
         total_data_kb:total_response_size_kb,
         throughput_per_second_kb: throughput_kb_s,
-        http_errors: http_errors.lock().unwrap().clone(),
+        http_errors: http_errors.lock().await.clone(),
         timestamp,
-        assert_errors: assert_errors.lock().unwrap().clone(),
+        assert_errors: assert_errors.lock().await.clone(),
     };
-    let mut should_stop = SINGLE_SHOULD_STOP.lock();
+    let mut should_stop = SINGLE_SHOULD_STOP.lock().await;
     *should_stop = true;
     eprintln!("压测结束");
     Ok(test_result)

@@ -326,7 +326,7 @@ pub async fn batch(
                                             Err(e) => {
                                                 *api_err_count_clone.lock().await += 1;
                                                 *err_count_clone.lock().await += 1;
-                                                http_errors_clone.lock().await.increment(0, format!("获取响应流失败::{:?}", e),endpoint_clone.lock().await.url.clone());
+                                                http_errors_clone.lock().await.increment(0, format!("获取响应流失败::{:?}", e), endpoint_clone.lock().await.url.clone()).await;
                                                 break
                                             }
                                         };
@@ -355,7 +355,7 @@ pub async fn batch(
                                                     *api_err_count_clone.lock().await += 1;
                                                     assert_errors_clone.lock().await.increment(
                                                         String::from(endpoint_clone.lock().await.url.clone()),
-                                                        format!("{:?}-JSONPath查询失败:{:?}",api_name_clone ,e));
+                                                        format!("{:?}-JSONPath查询失败:{:?}", api_name_clone, e)).await;
                                                     assertion_failed = true;
                                                     break;
                                                 }
@@ -374,7 +374,7 @@ pub async fn batch(
                                                         *api_err_count_clone.lock().await += 1;
                                                         assert_errors_clone.lock().await.increment(
                                                             String::from(endpoint_clone.lock().await.url.clone()),
-                                                            format!("{:?}-JSONPath查询失败:{:?}",api_name_clone ,"没有匹配到任何结果"));
+                                                            format!("{:?}-JSONPath查询失败:{:?}", api_name_clone, "没有匹配到任何结果")).await;
                                                         assertion_failed = true;
                                                         break;
                                                     }
@@ -386,7 +386,7 @@ pub async fn batch(
                                                         *api_err_count_clone.lock().await += 1;
                                                         assert_errors_clone.lock().await.increment(
                                                             String::from(endpoint_clone.lock().await.url.clone()),
-                                                            format!("{:?}-JSONPath查询失败:{:?}",api_name_clone ,"匹配到多个值，无法进行断言"));
+                                                            format!("{:?}-JSONPath查询失败:{:?}", api_name_clone, "匹配到多个值，无法进行断言")).await;
                                                         assertion_failed = true;
                                                         break;
                                                     }
@@ -400,9 +400,9 @@ pub async fn batch(
                                                                 increment(
                                                                     String::from(endpoint_clone.lock().await.url.clone()),
                                                                     format!(
-                                                                        "{:?}-预期结果：{:?}, 实际结果：{:?}",api_name_clone ,assert_option.reference_object, result
+                                                                        "{:?}-预期结果：{:?}, 实际结果：{:?}", api_name_clone, assert_option.reference_object, result
                                                                     )
-                                                                );
+                                                                ).await;
                                                             if verbose{
                                                                 eprintln!("{:?}-预期结果：{:?}, 实际结果：{:?}",api_name_clone ,assert_option.reference_object, result)
                                                             }
@@ -468,7 +468,7 @@ pub async fn batch(
                                     let status_code = u16::from(response.status());
                                     let err_msg = format!("HTTP 错误: 状态码 {}", status_code);
                                     let url = response.url().to_string();
-                                    http_errors_clone.lock().await.increment(status_code, err_msg, url);
+                                    http_errors_clone.lock().await.increment(status_code, err_msg, url).await;
                                     if verbose{
                                         println!("{:?}-HTTP 错误: 状态码 {:?}",api_name_clone, status_code)
                                     }
@@ -489,7 +489,7 @@ pub async fn batch(
                                 }
                             }
                             let err_msg = e.to_string();
-                            http_errors_clone.lock().await.increment(status_code, err_msg, endpoint_clone.lock().await.url.clone());
+                            http_errors_clone.lock().await.increment(status_code, err_msg, endpoint_clone.lock().await.url.clone()).await;
                         },
                     }
                 }
@@ -515,7 +515,7 @@ pub async fn batch(
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(1));
-            let should_stop = *RESULTS_SHOULD_STOP.lock();
+            let should_stop = *RESULTS_SHOULD_STOP.lock().await;
             while !should_stop {
                 interval.tick().await;
 
@@ -553,7 +553,7 @@ pub async fn batch(
                 // println!("{:?}", api_results);
                 // 已开启的并发量
                 let total_concurrent_number = *concurrent_number_clone.lock().await;
-                let mut queue = RESULTS_QUEUE.lock();
+                let mut queue = RESULTS_QUEUE.lock().await;
                 // 如果队列中有了一个数据了，就移除旧数据
                 if queue.len() == 1 {
                     queue.pop_front();
@@ -572,9 +572,9 @@ pub async fn batch(
                     err_count,
                     total_data_kb:total_response_size_kb,
                     throughput_per_second_kb: throughput_kb_s,
-                    http_errors: http_errors.lock().unwrap().clone(),
+                    http_errors: http_errors.lock().await.clone(),
                     timestamp,
-                    assert_errors: assert_errors.lock().unwrap().clone(),
+                    assert_errors: assert_errors.lock().await.clone(),
                     total_concurrent_number,
                     api_results: api_results.to_vec().clone(),
                 };
@@ -644,13 +644,13 @@ pub async fn batch(
         err_count:*err_count_clone.lock().await,
         total_data_kb:total_response_size_kb,
         throughput_per_second_kb: throughput_kb_s,
-        http_errors: http_errors.lock().unwrap().clone(),
+        http_errors: http_errors.lock().await.clone(),
         timestamp,
-        assert_errors: assert_errors.lock().unwrap().clone(),
+        assert_errors: assert_errors.lock().await.clone(),
         total_concurrent_number: total_concurrent_number_clone,
         api_results:api_results.to_vec().clone(),
     });
-    let mut should_stop = RESULTS_SHOULD_STOP.lock();
+    let mut should_stop = RESULTS_SHOULD_STOP.lock().await;
     *should_stop = true;
     eprintln!("测试完成！");
     result
