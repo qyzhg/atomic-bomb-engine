@@ -164,7 +164,8 @@ pub async fn batch(
                                     val
                                 }
                             };
-                            // 开始断言
+                            // 通过jsonpath提取数据
+                            // 将响应值提取到map中
                         }
                     }
                 }
@@ -428,21 +429,21 @@ pub async fn batch(
                                     let mut assertion_failed = false;
                                     // 断言
                                     if let Some(assert_options) = assert_options_clone{
-                                        let json_value: Value = match serde_json::from_slice(&*body_bytes) {
+                                        let json_value: Option<Value> = match serde_json::from_slice(&*body_bytes) {
                                             Err(e) =>{
                                                 if verbose{
                                                     eprintln!("JSONPath 查询失败: {}", e);
                                                 };
                                                 *err_count_clone.lock().await += 1;
                                                 *api_err_count_clone.lock().await += 1;
+                                                assertion_failed = true;
                                                 assert_errors_clone.lock().await.increment(
                                                     String::from(endpoint_clone.lock().await.url.clone()),
                                                     format!("{:?}-JSONPath查询失败:{:?}", api_name_clone, e)).await;
-                                                assertion_failed = true;
-                                                break;
+                                                None
                                             }
                                             Ok(val) => {
-                                                val
+                                                Some(val)
                                             }
                                         };
                                         // 多断言
@@ -452,63 +453,65 @@ pub async fn batch(
                                                 break
                                             }
                                             // 通过jsonpath提取数据
-                                            match select(&json_value, &*assert_option.jsonpath) {
-                                                Ok(results) => {
-                                                    if results.is_empty(){
-                                                        if verbose{
-                                                            eprintln!("没有匹配到任何结果");
-                                                        }
-                                                        *err_count_clone.lock().await += 1;
-                                                        *api_err_count_clone.lock().await += 1;
-                                                        assert_errors_clone.lock().await.increment(
-                                                            String::from(endpoint_clone.lock().await.url.clone()),
-                                                            format!("{:?}-JSONPath查询失败:{:?}", api_name_clone, "没有匹配到任何结果")).await;
-                                                        assertion_failed = true;
-                                                        break;
-                                                    }
-                                                    if results.len() >1{
-                                                        if verbose{
-                                                            eprintln!("匹配到多个值，无法进行断言");
-                                                        }
-                                                        *err_count_clone.lock().await += 1;
-                                                        *api_err_count_clone.lock().await += 1;
-                                                        assert_errors_clone.lock().await.increment(
-                                                            String::from(endpoint_clone.lock().await.url.clone()),
-                                                            format!("{:?}-JSONPath查询失败:{:?}", api_name_clone, "匹配到多个值，无法进行断言")).await;
-                                                        assertion_failed = true;
-                                                        break;
-                                                    }
-                                                    // 取出匹配到的唯一值
-                                                    if let Some(result) = results.get(0).map(|&v|v) {
-                                                        if *result != assert_option.reference_object{
-                                                            // 将失败情况加入到一个容器中
-                                                            assert_errors_clone.
-                                                                lock().
-                                                                await.
-                                                                increment(
-                                                                    String::from(endpoint_clone.lock().await.url.clone()),
-                                                                    format!(
-                                                                        "{:?}-预期结果：{:?}, 实际结果：{:?}", api_name_clone, assert_option.reference_object, result
-                                                                    )
-                                                                ).await;
+                                            if let Some(json_val) = json_value.clone(){
+                                                match select(&json_val, &*assert_option.jsonpath) {
+                                                    Ok(results) => {
+                                                        if results.is_empty(){
                                                             if verbose{
-                                                                eprintln!("{:?}-预期结果：{:?}, 实际结果：{:?}",api_name_clone ,assert_option.reference_object, result)
+                                                                eprintln!("没有匹配到任何结果");
                                                             }
-                                                            // 错误数据增加
                                                             *err_count_clone.lock().await += 1;
                                                             *api_err_count_clone.lock().await += 1;
-                                                            // 退出断言
+                                                            assert_errors_clone.lock().await.increment(
+                                                                String::from(endpoint_clone.lock().await.url.clone()),
+                                                                format!("{:?}-JSONPath查询失败:{:?}", api_name_clone, "没有匹配到任何结果")).await;
                                                             assertion_failed = true;
                                                             break;
                                                         }
-                                                    }
-                                                },
-                                                Err(e) => {
-                                                    eprintln!("JSONPath 查询失败: {}", e);
-                                                    assertion_failed = true;
-                                                    break;
-                                                },
-                                            }
+                                                        if results.len() > 1{
+                                                            if verbose{
+                                                                eprintln!("匹配到多个值，无法进行断言");
+                                                            }
+                                                            *err_count_clone.lock().await += 1;
+                                                            *api_err_count_clone.lock().await += 1;
+                                                            assert_errors_clone.lock().await.increment(
+                                                                String::from(endpoint_clone.lock().await.url.clone()),
+                                                                format!("{:?}-JSONPath查询失败:{:?}", api_name_clone, "匹配到多个值，无法进行断言")).await;
+                                                            assertion_failed = true;
+                                                            break;
+                                                        }
+                                                        // 取出匹配到的唯一值
+                                                        if let Some(result) = results.get(0).map(|&v|v) {
+                                                            if *result != assert_option.reference_object{
+                                                                // 将失败情况加入到一个容器中
+                                                                assert_errors_clone.
+                                                                    lock().
+                                                                    await.
+                                                                    increment(
+                                                                        String::from(endpoint_clone.lock().await.url.clone()),
+                                                                        format!(
+                                                                            "{:?}-预期结果：{:?}, 实际结果：{:?}", api_name_clone, assert_option.reference_object, result
+                                                                        )
+                                                                    ).await;
+                                                                if verbose{
+                                                                    eprintln!("{:?}-预期结果：{:?}, 实际结果：{:?}",api_name_clone ,assert_option.reference_object, result)
+                                                                }
+                                                                // 错误数据增加
+                                                                *err_count_clone.lock().await += 1;
+                                                                *api_err_count_clone.lock().await += 1;
+                                                                // 退出断言
+                                                                assertion_failed = true;
+                                                                break;
+                                                            }
+                                                        }
+                                                    },
+                                                    Err(e) => {
+                                                        eprintln!("JSONPath 查询失败: {}", e);
+                                                        assertion_failed = true;
+                                                        break;
+                                                    },
+                                                }
+                                            };
                                         }
                                     }
                                     if !assertion_failed{
