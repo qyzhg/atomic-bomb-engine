@@ -353,13 +353,26 @@ pub async fn batch(
                     let method = Method::from_str(&method_clone.to_uppercase()).map_err(|_| Error::msg("构建请求方法失败"))?;
                     // 构建请求
                     let mut request = client.request(method, endpoint_clone.lock().await.url.clone());
+                    // 提取器b树 map副本
+                    let extract_b_tree_map_clone = &extract_map_arc_clone.lock().await.clone();
                     // 构建请求头
                     let mut headers = HeaderMap::new();
                     headers.insert(USER_AGENT, user_agent_clone.parse()?);
                     if let Some(headers_map) = headers_clone {
                         headers.extend(headers_map.iter().map(|(k, v)| {
                             let header_name = k.parse::<HeaderName>().expect("无效的header名称");
-                            let header_value = v.parse::<HeaderValue>().expect("无效的header值");
+                            // 将header的value模板进行填充
+                            let handlebars = Handlebars::new();
+                            let new_val = match handlebars.render_template(v, &json!(extract_b_tree_map_clone)){
+                                Ok(v) => {
+                                    v
+                                }
+                                Err(e) => {
+                                    eprintln!("{:?}", e);
+                                    v.to_string()
+                                }
+                            };
+                            let header_value = new_val.parse::<HeaderValue>().expect("无效的header值");
                             (header_name, header_value)
                         }));
                     }
@@ -367,8 +380,7 @@ pub async fn batch(
                     if let Some(ref source) = cookie_clone{
                         // 使用模版替换cookies
                         let handlebars = Handlebars::new();
-                        let extract_b_tree_map = &extract_map_arc_clone.lock().await.clone();
-                        let new_cookies = match handlebars.render_template(source, &json!(extract_b_tree_map)){
+                        let new_cookies = match handlebars.render_template(source, &json!(extract_b_tree_map_clone)){
                             Ok(c) => {
                                 c
                             }
@@ -387,14 +399,38 @@ pub async fn batch(
                             }
                         }
                     }
-                    println!("{:?}", headers);
+
                     request = request.headers(headers);
                     // 构建json请求
                     if let Some(json_value) = json_obj_clone{
-                        request = request.json(&json_value);
+                        // 将json转为字符串，并且将模版填充
+                        let handlebars = Handlebars::new();
+                        let json_string = match handlebars.render_template(&*json_value.to_string(), &json!(extract_b_tree_map_clone)){
+                            Ok(j) => {
+                                j
+                            }
+                            Err(e) => {
+                                eprintln!("{:?}", e);
+                                json_value.to_string()
+                            }
+                        };
+                        request = request.json(&json!(json_string));
                     }
                     // 构建form表单
-                    if let Some(form_data) = form_data_clone{
+                    if let Some(mut form_data) = form_data_clone{
+                        form_data.iter_mut().for_each(|(_key, value)|{
+                            let handlebars = Handlebars::new();
+                            let new_val = match handlebars.render_template(value, &json!(extract_b_tree_map_clone)){
+                                Ok(v) => {
+                                    v
+                                }
+                                Err(e) => {
+                                    eprintln!("{:?}", e);
+                                    value.to_string()
+                                }
+                            };
+                            *value = new_val;
+                        });
                         request = request.form(&form_data);
                     };
                     // 记录开始时间
