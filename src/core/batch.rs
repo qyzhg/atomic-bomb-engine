@@ -1,29 +1,30 @@
+use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
-use histogram::Histogram;
 use std::time::{Duration, Instant};
-use anyhow::{Context, Error};
-use reqwest::{Client, Method, StatusCode};
-use tokio::sync::Mutex;
-use reqwest::header::{COOKIE, HeaderMap, HeaderName, HeaderValue, USER_AGENT};
-use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
-use jsonpath_lib::select;
-use tokio::time::interval;
-use std::env;
-use futures::stream::StreamExt;
+use anyhow::{Context, Error};
 use futures::future::join_all;
+use futures::stream::StreamExt;
+use histogram::Histogram;
+use jsonpath_lib::select;
+use reqwest::{Client, Method, StatusCode};
+use reqwest::header::{COOKIE, HeaderMap, HeaderName, HeaderValue, USER_AGENT};
+use serde_json::{json, Value};
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-
+use tokio::time::interval;
+use handlebars::{Handlebars};
+use std::collections::BTreeMap;
 
 use crate::core::check_endpoints_names::check_endpoints_names;
 use crate::core::concurrency_controller::ConcurrencyController;
 use crate::core::sleep_guard::SleepGuard;
 use crate::core::status_share::{RESULTS_QUEUE, RESULTS_SHOULD_STOP};
+use crate::models::api_endpoint::ApiEndpoint;
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::{ApiResult, BatchResult};
-use crate::models::api_endpoint::ApiEndpoint;
 use crate::models::setup::SetupApiEndpoint;
 use crate::models::step_option::{InnerStepOption, StepOption};
 
@@ -88,6 +89,8 @@ pub async fn batch(
         "{} {} ({}; {})",
         app_name, app_version, os_type, os_version
     );
+    // 全局提取字典
+    let mut extract_map: BTreeMap<String, Value> = BTreeMap::new();
     // 开始初始化
     if let Some(setup_options) = setup_options{
         for option in setup_options{
@@ -165,7 +168,28 @@ pub async fn batch(
                                 }
                             };
                             // 通过jsonpath提取数据
-                            // 将响应值提取到map中
+                            match select(&json_value,&jsonpath) {
+                                Ok(results) => {
+                                    if results.is_empty(){
+                                        return Err(Error::msg("初始化失败::jsonpath没有匹配到任何值"))
+                                    }
+                                    if results.len() > 1{
+                                        return Err(Error::msg("初始化失败::jsonpath匹配的不是唯一值"))
+                                    }
+                                    // 取出匹配到的唯一值
+                                    if let Some(result) = results.get(0).map(|&v|v) {
+                                        // 检查key是否冲突
+                                        if extract_map.contains_key(&key){
+                                            return Err(Error::msg(format!("初始化失败::key {:?}冲突",key)))
+                                        }
+                                        // 将key设置到字典中
+                                        extract_map.insert(key.clone(), result.clone());
+                                    }
+                                },
+                                Err(e) => {
+                                    return Err(Error::msg(format!("jsonpath提取数据失败::{:?}", e)))
+                                },
+                            }
                         }
                     }
                 }
@@ -175,6 +199,8 @@ pub async fn batch(
             }
         }
     }
+    // 并发安全的提取字典
+    let extract_map_arc = Arc::new(Mutex::new(extract_map));
     // 针对每一个接口开始配置
     for (index, endpoint_arc) in api_endpoints_arc.clone().into_iter().enumerate() {
         let endpoint = endpoint_arc.lock().await;
@@ -220,7 +246,16 @@ pub async fn batch(
             Some(option) => {
                 // 计算每个接口的步长
                 let step = option.increase_step as f64 * weight_ratio;
-                Arc::new(ConcurrencyController::new(concurrency_for_endpoint, Option::from(InnerStepOption { increase_step: step, increase_interval: option.increase_interval })))
+                Arc::new(
+                    ConcurrencyController::new(
+                        concurrency_for_endpoint, Option::from(
+                            InnerStepOption {
+                                increase_step: step,
+                                increase_interval: option.increase_interval
+                            }
+                        )
+                    )
+                )
             }
         };
         // 后台启动并发控制器
@@ -281,11 +316,15 @@ pub async fn batch(
             let client_builder = Client::builder();
             // 如果有超时时间就将client设置
             let client = if endpoint_clone.lock().await.timeout_secs > 0 {
-                client_builder.timeout(Duration::from_secs(endpoint_clone.lock().await.timeout_secs)).build().context("构建带超时的http客户端失败")?
+                client_builder.
+                    timeout(Duration::from_secs(endpoint_clone.lock().await.timeout_secs)).build().context("构建带超时的http客户端失败")?
             } else {
                 client_builder.build().context("构建http客户端失败")?
             };
+            // 并发控制器副本
             let controller_clone = controller.clone();
+            // 全局提取字典副本
+            let extract_map_arc_clone = Arc::clone(&extract_map_arc);
             // 开启并发
             let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                 let semaphore = controller_clone.get_semaphore();
@@ -325,8 +364,21 @@ pub async fn batch(
                         }));
                     }
                     // 构建cookies
-                    if let Some(ref c) = cookie_clone{
-                        match HeaderValue::from_str(c){
+                    if let Some(ref source) = cookie_clone{
+                        // 使用模版替换cookies
+                        let handlebars = Handlebars::new();
+                        let extract_b_tree_map = &extract_map_arc_clone.lock().await.clone();
+                        let new_cookies = match handlebars.render_template(source, &json!(extract_b_tree_map)){
+                            Ok(c) => {
+                                c
+                            }
+                            Err(e) => {
+                                eprintln!("{:?}", e);
+                                source.to_string()
+                            }
+                        };
+                        // 将cookies塞进header
+                        match HeaderValue::from_str(&new_cookies){
                             Ok(h) => {
                                 headers.insert(COOKIE, h);
                             },
@@ -335,6 +387,7 @@ pub async fn batch(
                             }
                         }
                     }
+                    println!("{:?}", headers);
                     request = request.headers(headers);
                     // 构建json请求
                     if let Some(json_value) = json_obj_clone{
@@ -754,9 +807,11 @@ pub async fn batch(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::models::assert_option::AssertOption;
     use core::option::Option;
+    use crate::models::assert_option::AssertOption;
+    use crate::models::setup::JsonpathExtract;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_batch() {
@@ -765,31 +820,31 @@ mod tests {
         assert_vec.push(AssertOption{ jsonpath: "$.code".to_string(), reference_object: ref_obj });
         let mut endpoints: Vec<ApiEndpoint> = Vec::new();
 
-        endpoints.push(ApiEndpoint{
-            name: "有断言".to_string(),
-            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-            method: "GET".to_string(),
-            timeout_secs: 10,
-            weight: 1,
-            json: None,
-            form_data: None,
-            headers: None,
-            cookies: None,
-            assert_options: Some(assert_vec.clone()),
-        });
-        //
-        endpoints.push(ApiEndpoint{
-            name: "无断言".to_string(),
-            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-            method: "GET".to_string(),
-            timeout_secs: 10,
-            weight: 3,
-            json: None,
-            form_data: None,
-            headers: None,
-            cookies: None,
-            assert_options: None,
-        });
+        // endpoints.push(ApiEndpoint{
+        //     name: "有断言".to_string(),
+        //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+        //     method: "GET".to_string(),
+        //     timeout_secs: 10,
+        //     weight: 1,
+        //     json: None,
+        //     form_data: None,
+        //     headers: None,
+        //     cookies: None,
+        //     assert_options: Some(assert_vec.clone()),
+        // });
+        // //
+        // endpoints.push(ApiEndpoint{
+        //     name: "无断言".to_string(),
+        //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+        //     method: "GET".to_string(),
+        //     timeout_secs: 10,
+        //     weight: 3,
+        //     json: None,
+        //     form_data: None,
+        //     headers: None,
+        //     cookies: None,
+        //     assert_options: None,
+        // });
 
         // endpoints.push(ApiEndpoint{
         //     name: "test-1".to_string(),
@@ -803,6 +858,8 @@ mod tests {
         //     form_data:None,
         //     assert_options: None,
         // });
+        let mut jsonpath_extracts: Vec<JsonpathExtract> = Vec::new();
+        jsonpath_extracts.push(JsonpathExtract{ key: "test".to_string(), jsonpath: "$.code".to_string() });
         let mut setup:Vec<SetupApiEndpoint> = Vec::new();
         setup.push(SetupApiEndpoint{
             name: "初始化-1".to_string(),
@@ -813,7 +870,31 @@ mod tests {
             form_data: None,
             headers: None,
             cookies: None,
-            jsonpath_extract: None,
+            jsonpath_extract: Some(jsonpath_extracts),
+        });
+        endpoints.push(ApiEndpoint{
+            name: "无断言1".to_string(),
+            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+            method: "GET".to_string(),
+            timeout_secs: 10,
+            weight: 3,
+            json: None,
+            form_data: None,
+            headers: None,
+            cookies: Some("bbbbb".to_string()),
+            assert_options: None,
+        });
+        endpoints.push(ApiEndpoint{
+            name: "无断言2".to_string(),
+            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+            method: "GET".to_string(),
+            timeout_secs: 10,
+            weight: 3,
+            json: None,
+            form_data: None,
+            headers: None,
+            cookies: Some("aaaaa-{{test}}".to_string()),
+            assert_options: None,
         });
         match batch(
             5,
@@ -822,7 +903,7 @@ mod tests {
             true,
             endpoints,
             Option::from(StepOption { increase_step: 5, increase_interval: 2 }),
-            Option::from(setup)
+            Option::from(setup),
         ).await {
             Ok(r) => {
                 println!("{:#?}", r)
